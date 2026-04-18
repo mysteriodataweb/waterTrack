@@ -1,0 +1,9 @@
+fastapi
+geoalchemy2
+pg8000
+python-dotenv
+shapely
+sqlalchemy
+uvicorn
+scikit-learn
+ipykernel
