@@ -32,10 +32,15 @@ def get_navigation_route(payload: NavigationRouteRequest):
     profile = payload.profile if payload.profile in _ALLOWED_PROFILES else "driving-car"
 
     url = f"https://api.openrouteservice.org/v2/directions/{profile}/geojson"
+    # Le point d'arrivée (source d'eau) est souvent hors route : on élargit
+    # le rayon de recherche pour le deuxième point (défaut ORS = 350 m).
+    # 5000 m permet d'accrocher la route la plus proche même pour des points
+    # éloignés. Le premier point (position utilisateur) garde le rayon standard.
     body = json.dumps({
         "coordinates": [[payload.start.lng, payload.start.lat], [payload.end.lng, payload.end.lat]],
         "instructions": True,
         "language": "fr",
+        "radiuses": [-1, 5000],
     }).encode("utf-8")
 
     req = urllib.request.Request(
