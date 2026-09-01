@@ -421,8 +421,15 @@ function toNavigationPosition(position: GeolocationPosition, previous: Navigatio
 }
 
 async function fetchPlaceName(point: GeoPoint): Promise<string> {
-  const place = await fetchReverseGeocode(point);
-  return place.label;
+  // Le nom du lieu est un confort d'affichage : s'il echoue (quota du
+  // geocodeur, reseau...), on retombe sur les coordonnees plutot que de
+  // faire echouer tout le calcul d'itineraire.
+  try {
+    const place = await fetchReverseGeocode(point);
+    return place.label;
+  } catch {
+    return `${point.lat.toFixed(4)}, ${point.lng.toFixed(4)}`;
+  }
 }
 
 function computeProgress(route: NavigationRoute, position: GeoPoint) {

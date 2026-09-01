@@ -76,9 +76,15 @@ def get_navigation_route(payload: NavigationRouteRequest):
     )
 
 
-@router.get("/navigation/reverse", response_model=ReverseGeocodeResponse)
-def get_reverse_geocode(lat: float, lng: float):
-    key = _require_ors_key()
+def _coord_label(lat: float, lng: float) -> str:
+    return f"{lat:.4f}, {lng:.4f}"
+
+
+def _reverse_via_ors(lat: float, lng: float) -> ReverseGeocodeResponse | None:
+    """Géocodage inverse ORS. Retourne None si indisponible (quota, 403...)."""
+    if not settings.openroute_api_key:
+        return None
+    key = settings.openroute_api_key
     query = urllib.parse.urlencode({"api_key": key, "point.lon": lng, "point.lat": lat, "size": 1, "lang": "fr"})
     req = urllib.request.Request(
         f"https://api.openrouteservice.org/geocode/reverse?{query}", method="GET",
@@ -87,18 +93,69 @@ def get_reverse_geocode(lat: float, lng: float):
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.URLError as exc:
-        raise HTTPException(status_code=503, detail=f"Géocodage inverse indisponible: {exc.reason}") from exc
+    except urllib.error.URLError:
+        # Quota épuisé (403 "Quota exceeded"), rate limit ou réseau : on bascule.
+        return None
 
     features = data.get("features") or []
     if not features:
-        return ReverseGeocodeResponse(label="Lieu inconnu")
-    props = (features[0].get("properties") or {})
+        return None
+    props = features[0].get("properties") or {}
+    label = props.get("label") or props.get("name")
+    if not label:
+        return None
     return ReverseGeocodeResponse(
-        label=props.get("label") or props.get("name") or "Lieu inconnu",
+        label=label,
         name=props.get("name"),
         street=props.get("street"),
         locality=props.get("locality") or props.get("county"),
         region=props.get("region"),
         country=props.get("country"),
     )
+
+
+def _reverse_via_nominatim(lat: float, lng: float) -> ReverseGeocodeResponse | None:
+    """Repli OpenStreetMap Nominatim : gratuit et sans clé API."""
+    query = urllib.parse.urlencode({
+        "format": "jsonv2", "lat": lat, "lon": lng, "zoom": 16,
+        "addressdetails": 1, "accept-language": "fr",
+    })
+    req = urllib.request.Request(
+        f"https://nominatim.openstreetmap.org/reverse?{query}", method="GET",
+        # Nominatim exige un User-Agent identifiant l'application.
+        headers={"User-Agent": "WaterTracker/2.0 (contact: watertracker@example.org)",
+                 "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.URLError:
+        return None
+
+    label = data.get("display_name")
+    if not label:
+        return None
+    address = data.get("address") or {}
+    return ReverseGeocodeResponse(
+        label=label,
+        name=data.get("name") or address.get("village") or address.get("town"),
+        street=address.get("road"),
+        locality=address.get("village") or address.get("town") or address.get("city") or address.get("county"),
+        region=address.get("state"),
+        country=address.get("country"),
+    )
+
+
+@router.get("/navigation/reverse", response_model=ReverseGeocodeResponse)
+def get_reverse_geocode(lat: float, lng: float):
+    """Nom du lieu à partir de coordonnées.
+
+    C'est un libellé de confort : il ne doit JAMAIS faire échouer la navigation.
+    On tente ORS, puis Nominatim, et en dernier recours on renvoie les
+    coordonnées formatées avec un code 200.
+    """
+    for provider in (_reverse_via_ors, _reverse_via_nominatim):
+        result = provider(lat, lng)
+        if result is not None:
+            return result
+    return ReverseGeocodeResponse(label=_coord_label(lat, lng))

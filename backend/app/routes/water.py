@@ -85,22 +85,32 @@ def get_water_source(source_id: int, db: Session = Depends(get_db)):
 
 @router.post("/admin/recompute", response_model=AdminUpdateResponse)
 def recompute_all_scores(db: Session = Depends(get_db)):
-    """Recalcule risk_score/status de toutes les sources à partir du modèle."""
-    from ..services.ml import PredictionService
+    """Recalcule risk_score/status à partir de l'historique NDWI réel.
+
+    On n'utilise plus de seuil absolu sur `ndwi_moyen` (moyenne toutes saisons
+    confondues) : ce chiffre est dominé par la saisonnalité et ne dit rien de
+    la santé d'une source. Voir `services/risk.py`.
+    """
+    from ..models import NdwiObservation
+    from ..services.risk import compute_risk_from_history
+
+    rows = db.execute(
+        select(
+            NdwiObservation.source_id,
+            NdwiObservation.periode,
+            NdwiObservation.saison,
+            NdwiObservation.ndwi,
+        )
+    ).all()
+
+    historique: dict[int, list[tuple[str, str | None, float | None]]] = {}
+    for source_id, periode, saison, ndwi in rows:
+        historique.setdefault(source_id, []).append((periode, saison, ndwi))
 
     sources = db.execute(select(WaterSource)).scalars().all()
     updated = 0
     for s in sources:
-        data = {
-            "ndwi_moyen": s.ndwi_moyen,
-            "ndvi_moyen": None,
-            "latitude": s.latitude,
-            "longitude": s.longitude,
-            "saison": "seche",
-            "annee": 2024,
-            "semestre": 1,
-        }
-        res = PredictionService.get_risk_score(data)
+        res = compute_risk_from_history(historique.get(s.id, []), s.ndwi_moyen)
         s.risk_score = res["score"]
         s.status = res["status"]
         updated += 1
