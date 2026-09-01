@@ -9,6 +9,9 @@ const profiles: Array<{ key: NavigationProfile; label: string; icon: typeof Car 
   { key: "cycling-regular", label: "Velo", icon: Bike },
 ];
 
+// Centre de Ouagadougou : origine de repli quand le GPS est indisponible.
+const FALLBACK_ORIGIN = { lat: 12.3647, lng: -1.5221 };
+
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.max(1, Math.round(seconds))} s`;
   const minutes = Math.round(seconds / 60);
@@ -37,6 +40,7 @@ export function PanelNavigation({
   const [profile, setProfile] = useState<NavigationProfile>("driving-car");
   const [loadingId, setLoadingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [originNotice, setOriginNotice] = useState<string | null>(null);
 
   const routeRef = useRef<NavigationRoute | null>(null);
   const watchRef = useRef<number | null>(null);
@@ -65,7 +69,17 @@ export function PanelNavigation({
     stopTracking(false);
 
     try {
-      const origin = await readCurrentPosition(lastPositionRef.current);
+      // Le GPS ne doit pas etre un point de rupture : navigateur sans capteur,
+      // permission refusee ou timeout ne doivent pas empecher de consulter un
+      // itineraire. On retombe alors sur un point de depart par defaut.
+      let origin: NavigationPosition;
+      try {
+        origin = await readCurrentPosition(lastPositionRef.current);
+        setOriginNotice(null);
+      } catch {
+        origin = { ...FALLBACK_ORIGIN, accuracy: undefined, heading: 0, speed: null, timestamp: Date.now() };
+        setOriginNotice("Position GPS indisponible : depart simule depuis le centre de Ouagadougou.");
+      }
       const currentPlace = await fetchPlaceName(origin);
       setPlaceName(currentPlace);
       setPosition(origin);
@@ -368,6 +382,12 @@ export function PanelNavigation({
           </div>
         ))}
       </div>
+
+      {originNotice && !error && (
+        <div className="rounded-md border border-[#7a6220] bg-[#251f0f] p-3 text-sm text-[#e3b341]">
+          {originNotice}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md border border-[#7f3535] bg-[#2a1115] p-3 text-sm text-[#ffb4b4]">
