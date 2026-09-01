@@ -14,7 +14,7 @@ Système d'alerte précoce de tarissement des sources d'eau au Burkina Faso
 ## Architecture
 
 ```
-watertracker-backend-v2/
+backend/
 ├── app/
 │   ├── main.py                 # FastAPI + CORS restreint + health + scheduler
 │   ├── config.py               # Lecture .env sécurisée (pydantic-settings)

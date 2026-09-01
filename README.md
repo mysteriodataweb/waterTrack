@@ -23,11 +23,11 @@ WaterTracker supervise un réseau de **sources / points d'eau** (barrages, reten
 ## Architecture (monorepo)
 
 ```
-watertracker-backend-v2/   Backend Python / FastAPI
-hydro-watch-africa-v2/     Frontend React + TypeScript (Vite, shadcn/ui, Leaflet)
+backend/     Backend Python / FastAPI
+frontend/    Frontend React + TypeScript (Vite, shadcn/ui, Leaflet)
 ```
 
-### Backend — `watertracker-backend-v2/`
+### Backend — `backend/`
 | Couche | Techno |
 |--------|--------|
 | API | FastAPI + Pydantic v2 |
@@ -39,7 +39,7 @@ hydro-watch-africa-v2/     Frontend React + TypeScript (Vite, shadcn/ui, Leaflet
 | Navigation | OpenRouteService (`app/routes/navigation.py`) |
 | Scheduler | APScheduler (`app/collectors/scheduler.py`) |
 
-### Frontend — `hydro-watch-africa-v2/`
+### Frontend — `frontend/`
 - React 19 + TypeScript + Vite
 - Carte : Leaflet + OpenStreetMap (fond sombre)
 - UI : shadcn/ui (Radix), icônes lucide-react
@@ -58,7 +58,7 @@ hydro-watch-africa-v2/     Frontend React + TypeScript (Vite, shadcn/ui, Leaflet
 | `GET` | `/api/health` | État de santé du service |
 | `POST` | `/api/admin/recompute` | Recalcul des scores de risque |
 
-> La config (clés GEE/Groq/ORS, URL DB) se fait via `.env` — voir `watertracker-backend-v2/.env.example`.
+> La config (clés GEE/Groq/ORS, URL DB) se fait via `.env` — voir `backend/.env.example`.
 
 ---
 
@@ -66,7 +66,7 @@ hydro-watch-africa-v2/     Frontend React + TypeScript (Vite, shadcn/ui, Leaflet
 
 ### 1. Backend
 ```bash
-cd watertracker-backend-v2
+cd backend
 python -m venv venv
 venv\Scripts\activate            # Windows
 pip install -r requirements.txt
@@ -76,7 +76,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ### 2. Frontend
 ```bash
-cd hydro-watch-africa-v2
+cd frontend
 npm install
 npm run dev                     # http://localhost:5173
 ```
@@ -94,7 +94,7 @@ npm run dev                     # http://localhost:5173
 
 ## Tests
 ```bash
-cd watertracker-backend-v2
+cd backend
 pytest -q          # 15 tests (API, prédiction, prophet)
 ```
 
