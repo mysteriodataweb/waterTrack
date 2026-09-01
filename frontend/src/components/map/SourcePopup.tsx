@@ -14,13 +14,13 @@ export function SourcePopup({
 }) {
   return (
     <div
-      className="fixed bottom-6 left-1/2 z-50 w-[420px] -translate-x-1/2 overflow-hidden rounded-md border border-[#2c3442]/70 bg-[#13171e]/75 backdrop-blur-xl text-white shadow-[0_24px_80px_rgba(5,7,10,0.4)]"
+      className="fixed bottom-3 left-1/2 z-50 w-[calc(100vw-1.5rem)] max-w-[420px] -translate-x-1/2 overflow-hidden rounded-md border border-[#2c3442]/70 bg-[#13171e]/90 backdrop-blur-xl text-white shadow-[0_24px_80px_rgba(5,7,10,0.4)] sm:bottom-6 sm:bg-[#13171e]/75"
       style={{ animation: "slide-up 0.2s ease-out" }}
     >
       <style>{`@keyframes slide-up { from { transform: translate(-50%, 20px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }`}</style>
       <div className="flex items-center justify-between border-b border-[#2a3140]/70 bg-[#151a21]/60 px-4 py-2.5">
-        <span className="text-[11px] font-bold tracking-[0.2em] text-[#9fc9ea]">WATER_SOURCE: {source.label.toUpperCase()}</span>
-        <button onClick={onClose} className="text-[#a3afbd] transition hover:text-white" aria-label="Fermer">
+        <span className="min-w-0 truncate text-[10px] font-bold tracking-[0.16em] text-[#9fc9ea] sm:text-[11px] sm:tracking-[0.2em]">WATER_SOURCE: {source.label.toUpperCase()}</span>
+        <button onClick={onClose} className="shrink-0 text-[#a3afbd] transition hover:text-white" aria-label="Fermer">
           <X className="size-4" />
         </button>
       </div>
@@ -52,9 +52,9 @@ export function SourcePopup({
 
 function Row({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div>
-      <div className="text-[9px] tracking-widest text-[#a3afbd]">{label}</div>
-      <div className="mt-0.5 font-bold" style={{ color: color ?? "#9fc9ea" }}>{value}</div>
+    <div className="min-w-0">
+      <div className="truncate text-[9px] tracking-widest text-[#a3afbd]">{label}</div>
+      <div className="mt-0.5 truncate font-bold" style={{ color: color ?? "#9fc9ea" }}>{value}</div>
     </div>
   );
 }

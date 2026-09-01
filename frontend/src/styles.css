@@ -112,6 +112,12 @@ html, body { background-color: #edeff2; color: var(--color-foreground); font-fam
   filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9);
 }
 
+/* Sur mobile le zoom Leaflet tomberait sous le popup de source :
+   le pinch-to-zoom tactile suffit, on masque les boutons. */
+@media (max-width: 639px) {
+  .leaflet-control-zoom { display: none; }
+}
+
 .marker-pulse {
   animation: pulse-marker 2s infinite;
   border-radius: 9999px;

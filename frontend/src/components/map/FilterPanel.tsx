@@ -1,5 +1,5 @@
 ﻿import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Search, X } from "lucide-react";
 import type { Source, Status } from "./types";
 
 const cities = [
@@ -10,8 +10,14 @@ const cities = [
 ];
 
 export function FilterPanel({
-  sources, filtreStatut, setFiltreStatut,
-}: { sources: Source[]; filtreStatut: Status[]; setFiltreStatut: (s: Status[]) => void }) {
+  sources, filtreStatut, setFiltreStatut, open = false, onClose,
+}: {
+  sources: Source[];
+  filtreStatut: Status[];
+  setFiltreStatut: (s: Status[]) => void;
+  open?: boolean;
+  onClose?: () => void;
+}) {
   const [expanded, setExpanded] = useState(true);
   const [ndwiMin, setNdwiMin] = useState(-0.5);
   const [ndwiMax, setNdwiMax] = useState(1);
@@ -43,12 +49,27 @@ const zone = (source.zone_detail ?? source.zone)?.trim() || "Ouagadougou";
   ];
 
   return (
-    <aside className="fixed right-5 top-[132px] bottom-5 z-40 w-[300px] overflow-hidden rounded-md border border-[#2c3442]/70 bg-[#13171e]/70 backdrop-blur-xl text-white shadow-[0_24px_80px_rgba(5,7,10,0.4)]">
-      <div className="h-full overflow-y-auto p-4 space-y-5">
+    <aside
+      className={`fixed top-12 right-0 bottom-0 z-[45] w-[300px] max-w-[86vw] overflow-hidden border-l border-[#2c3442]/70 bg-[#13171e]/95 backdrop-blur-xl text-white shadow-[0_24px_80px_rgba(5,7,10,0.4)] transition-transform duration-200 ease-out lg:right-5 lg:top-[132px] lg:bottom-5 lg:max-w-none lg:translate-x-0 lg:rounded-md lg:border lg:bg-[#13171e]/70 ${
+        open ? "translate-x-0" : "translate-x-full"
+      }`}
+    >
+      <div className="h-full overflow-y-auto overscroll-contain p-4 space-y-5">
         <div>
-          <div className="mb-3">
-            <div className="text-sm font-semibold tracking-wide">Zones d'analyse</div>
-            <div className="text-[11px] text-[#a3afbd]">Sources et filtres actifs</div>
+          <div className="mb-3 flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold tracking-wide">Zones d'analyse</div>
+              <div className="text-[11px] text-[#a3afbd]">Sources et filtres actifs</div>
+            </div>
+            {onClose && (
+              <button
+                onClick={onClose}
+                className="flex size-8 shrink-0 items-center justify-center rounded-md text-[#a3afbd] transition hover:bg-[#20262d] hover:text-white lg:hidden"
+                aria-label="Fermer les filtres"
+              >
+                <X className="size-4" />
+              </button>
+            )}
           </div>
 
           <label className="mb-3 flex h-10 items-center gap-2 rounded-md border border-[#2a3140] bg-[#151a21] px-3 text-[#a3afbd] focus-within:border-[#9fc9ea]">

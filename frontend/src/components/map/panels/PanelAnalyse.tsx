@@ -147,7 +147,7 @@ export function PanelAnalyse({
 
         {!loading && !error && prediction && (
           <div className="space-y-4">
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Metric label="NDWI" value={formatNumber(prediction.ndwi_actuel)} />
               <Metric label="Tendance" value={formatNumber(prediction.tendance)} />
               <Metric label="Confiance" value={`${prediction.confiance ?? 0}%`} />

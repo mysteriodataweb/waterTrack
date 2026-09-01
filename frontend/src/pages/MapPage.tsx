@@ -19,6 +19,8 @@ export default function MapPage() {
   const [panelActionNonce, setPanelActionNonce] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -57,9 +59,35 @@ export default function MapPage() {
   return (
     <div className="h-screen w-screen overflow-hidden bg-background text-foreground">
       <MapBackground sources={filtered} navigationRoute={navigationRoute} onSourceClick={setSelected} />
-      <TopNavbar />
+      <TopNavbar
+        onMenuClick={() => {
+          setMenuOpen((v) => !v);
+          setFiltersOpen(false);
+        }}
+        onFilterClick={() => {
+          setFiltersOpen((v) => !v);
+          setMenuOpen(false);
+        }}
+      />
       <KpisBar total={filtered.length} alerts={alerts} area={totalArea} topSource={topSource} />
-      <Sidebar active={activeSection} onChange={(section) => setActiveSection(activeSection === section ? null : section)} />
+
+      {(menuOpen || filtersOpen) && (
+        <button
+          onClick={() => {
+            setMenuOpen(false);
+            setFiltersOpen(false);
+          }}
+          className="fixed inset-0 top-12 z-[44] bg-black/50 backdrop-blur-[2px] lg:hidden"
+          aria-label="Fermer les panneaux"
+        />
+      )}
+
+      <Sidebar
+        active={activeSection}
+        onChange={(section) => setActiveSection(activeSection === section ? null : section)}
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+      />
       {activeSection && (
         <SectionPanel
           section={activeSection}
@@ -75,9 +103,15 @@ export default function MapPage() {
           onClose={() => setActiveSection(null)}
         />
       )}
-      <FilterPanel sources={sources} filtreStatut={filtreStatut} setFiltreStatut={setFiltreStatut} />
+      <FilterPanel
+        sources={sources}
+        filtreStatut={filtreStatut}
+        setFiltreStatut={setFiltreStatut}
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+      />
       {(loading || error) && (
-        <div className="fixed left-1/2 top-[132px] z-40 -translate-x-1/2 rounded-md border border-[#3a424d]/60 bg-[#13171e]/65 backdrop-blur-xl px-4 py-3 text-sm text-white shadow-[0_18px_60px_rgba(5,7,10,0.4)]">
+        <div className="fixed left-1/2 top-[120px] z-40 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 rounded-md border border-[#3a424d]/60 bg-[#13171e]/85 backdrop-blur-xl px-4 py-3 text-center text-xs text-white shadow-[0_18px_60px_rgba(5,7,10,0.4)] sm:top-[132px] sm:w-auto sm:text-sm">
           {loading ? "Chargement des sources depuis le backend..." : error}
         </div>
       )}

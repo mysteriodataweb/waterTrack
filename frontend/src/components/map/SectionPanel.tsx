@@ -26,11 +26,11 @@ export function SectionPanel({
   return (
     <div
       key={section}
-      className="fixed left-[266px] top-[128px] z-40 max-h-[calc(100vh-156px)] w-[560px] max-w-[calc(100vw-620px)] overflow-hidden rounded-md border border-[#2c3442]/70 bg-[#13171e]/70 backdrop-blur-xl text-white shadow-[0_24px_80px_rgba(5,7,10,0.4)]"
+      className="fixed inset-x-0 bottom-0 top-[124px] z-40 flex flex-col overflow-hidden rounded-t-xl border border-[#2c3442]/70 bg-[#13171e]/95 backdrop-blur-xl text-white shadow-[0_24px_80px_rgba(5,7,10,0.4)] sm:top-[132px] lg:inset-x-auto lg:bottom-auto lg:left-[266px] lg:top-[128px] lg:max-h-[calc(100vh-156px)] lg:w-[560px] lg:max-w-[calc(100vw-620px)] lg:rounded-md lg:bg-[#13171e]/70"
       style={{ animation: "panel-pop 0.22s ease-out" }}
     >
       <style>{`@keyframes panel-pop { from { transform: translateY(10px) scale(0.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }`}</style>
-      <div className="flex items-center justify-between border-b border-[#2a3140]/70 bg-[#151a21]/60 px-4 py-3">
+      <div className="flex shrink-0 items-center justify-between border-b border-[#2a3140]/70 bg-[#151a21]/60 px-4 py-3">
         <div>
           <div className="text-sm font-semibold tracking-wide">{titles[section]}</div>
           <div className="text-[11px] text-[#a3afbd]">Panneau contextuel</div>
@@ -43,7 +43,7 @@ export function SectionPanel({
           <X className="size-4" />
         </button>
       </div>
-      <div className="max-h-[calc(100vh-224px)] overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain lg:max-h-[calc(100vh-224px)] lg:flex-none">
         {section === "accueil" && <PanelAccueil sources={sources} onSelect={onSelect} />}
         {section === "navigation" && (
           <PanelNavigation
