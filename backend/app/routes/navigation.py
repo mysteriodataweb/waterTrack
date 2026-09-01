@@ -114,17 +114,16 @@ def _reverse_via_ors(lat: float, lng: float) -> ReverseGeocodeResponse | None:
     )
 
 
-def _reverse_via_nominatim(lat: float, lng: float) -> ReverseGeocodeResponse | None:
-    """Repli OpenStreetMap Nominatim : gratuit et sans clé API."""
-    query = urllib.parse.urlencode({
-        "format": "jsonv2", "lat": lat, "lon": lng, "zoom": 16,
-        "addressdetails": 1, "accept-language": "fr",
-    })
+def _reverse_via_photon(lat: float, lng: float) -> ReverseGeocodeResponse | None:
+    """Repli Photon (Komoot) : géocodeur OSM libre, sans clé API.
+
+    Nominatim n'est pas utilisable ici : sa politique d'usage renvoie 403 aux
+    appels serveur génériques. Photon accepte les requêtes sans authentification.
+    """
+    query = urllib.parse.urlencode({"lat": lat, "lon": lng, "lang": "fr", "limit": 1})
     req = urllib.request.Request(
-        f"https://nominatim.openstreetmap.org/reverse?{query}", method="GET",
-        # Nominatim exige un User-Agent identifiant l'application.
-        headers={"User-Agent": "WaterTracker/2.0 (contact: watertracker@example.org)",
-                 "Accept": "application/json"},
+        f"https://photon.komoot.io/reverse?{query}", method="GET",
+        headers={"User-Agent": "WaterTracker/2.0", "Accept": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
@@ -132,17 +131,27 @@ def _reverse_via_nominatim(lat: float, lng: float) -> ReverseGeocodeResponse | N
     except urllib.error.URLError:
         return None
 
-    label = data.get("display_name")
+    features = data.get("features") or []
+    if not features:
+        return None
+    props = features[0].get("properties") or {}
+
+    name = props.get("name")
+    street = props.get("street") or (name if props.get("type") == "street" else None)
+    locality = props.get("district") or props.get("locality") or props.get("city")
+    region = props.get("state")
+    country = props.get("country")
+
+    # Photon ne fournit pas de libellé prêt à l'emploi : on le compose.
+    parts = [p for p in (name, locality, props.get("city"), country) if p]
+    seen: set[str] = set()
+    label = ", ".join(p for p in parts if not (p in seen or seen.add(p)))
     if not label:
         return None
-    address = data.get("address") or {}
+
     return ReverseGeocodeResponse(
-        label=label,
-        name=data.get("name") or address.get("village") or address.get("town"),
-        street=address.get("road"),
-        locality=address.get("village") or address.get("town") or address.get("city") or address.get("county"),
-        region=address.get("state"),
-        country=address.get("country"),
+        label=label, name=name, street=street,
+        locality=locality, region=region, country=country,
     )
 
 
@@ -154,7 +163,7 @@ def get_reverse_geocode(lat: float, lng: float):
     On tente ORS, puis Nominatim, et en dernier recours on renvoie les
     coordonnées formatées avec un code 200.
     """
-    for provider in (_reverse_via_ors, _reverse_via_nominatim):
+    for provider in (_reverse_via_ors, _reverse_via_photon):
         result = provider(lat, lng)
         if result is not None:
             return result
