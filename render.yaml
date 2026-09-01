@@ -1,0 +1,51 @@
+services:
+  # ============================================================
+  # Backend API (FastAPI) - watertracker
+  # ============================================================
+  - type: web
+    name: watertracker-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    region: oregon
+    healthCheckPath: /api/health
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: watertracker-db
+          property: connectionString
+      - key: CORS_ORIGINS
+        sync: false
+      - key: API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTE_API_KEY
+        sync: false
+      - key: GEE_PROJECT
+        sync: false
+      - key: SCHEDULER_ENABLED
+        value: "false"
+
+  # ============================================================
+  # Frontend statique (Vite build -> dist)
+  # ============================================================
+  - type: static
+    name: watertracker-web
+    plan: free
+    rootDir: frontend
+    region: oregon
+    buildCommand: npm install && npm run build
+    publishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+
+databases:
+  - name: watertracker-db
+    plan: free
+    region: oregon
+    databaseName: watertracker_db
+    majorVersion: 16

@@ -69,18 +69,96 @@ def _load_history(db: Session, source_id: int) -> pd.DataFrame:
     return df
 
 
+def _predict_fallback(db: Session, source_id: int, df: pd.DataFrame) -> dict:
+    """Prédiction statistique sans Prophet (régression linéaire sur la pente NDWI).
+
+    Permet à l'API de rester fonctionnelle même quand 'prophet' (dépendance
+    optionnelle, lourde) n'est pas installé — utile sur le plan free de Render.
+    """
+    import numpy as _np
+
+    ndwi_values = df["ndwi"].values.astype(float)
+    n = len(ndwi_values)
+    x = _np.arange(n, dtype=float)
+    slope, intercept = _np.polyfit(x, ndwi_values, 1)
+
+    last_periode = str(df["periode"].iloc[-1])
+    ys = _periode_to_year_semester(last_periode)
+    last_year, last_sem = ys if ys else (2024, 2)
+
+    predictions = []
+    date_tarissement = None
+    total_proba_first_tarissement = 0.0
+    survived = 1.0
+
+    for i in range(1, 4):
+        if last_sem == 1:
+            y, s = last_year, 2
+        else:
+            y, s = last_year + 1, 1
+        label = f"{y}-S{s}"
+        last_year, last_sem = y, s
+
+        # Prolongement linéaire de la tendance historique.
+        future_x = float(n - 1 + i)
+        ndwi_predit = max(0.0, float(intercept + slope * future_x))
+
+        # Écart-type estimé à partir de l'erreur résiduelle du fit.
+        resid = ndwi_values - (intercept + slope * x)
+        sd = max(float(_np.std(resid)), 1e-6)
+
+        from scipy import stats
+        proba_periode = float(stats.norm.cdf((DRY_NDWI_THRESHOLD - ndwi_predit) / sd))
+        proba_periode = max(0.0, min(1.0, proba_periode))
+        proba_first = survived * proba_periode
+        total_proba_first_tarissement += proba_first
+        survived *= 1.0 - proba_periode
+
+        predictions.append({
+            "periode": label,
+            "ndwi_predit": round(ndwi_predit, 4),
+            "ndwi_min": round(max(0.0, ndwi_predit - 1.28 * sd), 4),
+            "ndwi_max": round(ndwi_predit + 1.28 * sd, 4),
+            "probabilite_tarissement": round(proba_first * 100, 1),
+        })
+
+        if date_tarissement is None and ndwi_predit < DRY_NDWI_THRESHOLD:
+            date_tarissement = label
+
+    tendance = float(slope)
+    if tendance < -0.05:
+        vitesse = "rapide"
+    elif tendance < 0:
+        vitesse = "lente"
+    else:
+        vitesse = "stable"
+
+    confiance = min(int(n / 10 * 100), 100)
+
+    return {
+        "water_source": source_id,
+        "ndwi_actuel": round(float(ndwi_values[-1]), 4),
+        "tendance": round(tendance, 4),
+        "vitesse_degradation": vitesse,
+        "date_tarissement": date_tarissement,
+        "confiance": confiance,
+        "probabilite_tarissement": round(total_proba_first_tarissement * 100, 1),
+        "predictions": predictions,
+        "modele": "regression_linéaire (fallback, sans prophet)",
+    }
+
+
 def predire_tarissement(db: Session, source_id: int) -> dict:
     df = _load_history(db, source_id)
     if len(df) < 3:
         return {"erreur": "Pas assez de données historiques (minimum 3 périodes)"}
 
-    # ---------- Prophet ----------
+    # ---------- Prophet (optionnel) ----------
     try:
         from prophet import Prophet  # import retardé : dépendance lourde & optionnelle
-    except ModuleNotFoundError as exc:  # pragma: no cover
-        raise ProphetUnavailableError(
-            "Le module 'prophet' n'est pas installé. Installe-le pour la prédiction de tarissement."
-        ) from exc
+    except ModuleNotFoundError:  # pragma: no cover
+        logger.info("prophet absent → prédiction statistique de secours (source %d)", source_id)
+        return _predict_fallback(db, source_id, df)
 
     hist = df[["periode", "ndwi"]].copy()
     hist["ds"] = hist["periode"].apply(_periode_to_date)
@@ -174,4 +252,5 @@ def predire_tarissement(db: Session, source_id: int) -> dict:
         "confiance": confiance,
         "probabilite_tarissement": round(total_proba_first_tarissement * 100, 1),
         "predictions": predictions,
+        "modele": "prophet",
     }

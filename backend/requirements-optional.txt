@@ -1,0 +1,5 @@
+# Dependances optionnelles (lourdes) - installees a part.
+# Prophet compile le modele Stan : tres lourd sur les plans libres.
+# Le backend fonctionne sans (la prediction exacte retourne un fallback propre).
+# Installer si besoin : pip install -r requirements-optional.txt
+prophet>=1.1
