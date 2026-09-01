@@ -1,0 +1,33 @@
+# Secrets — NEVER commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Données & artifacts générés
+data/historique/
+data/*.geojson
+app/models/*.pkl
+ml/runs/
+*.joblib
+
+# Tests / outils
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Système
+.DS_Store
+Thumbs.db

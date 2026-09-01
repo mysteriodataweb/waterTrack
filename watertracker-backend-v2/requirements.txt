@@ -1,0 +1,39 @@
+# ---- Framework API ----
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+pydantic-settings>=2.3
+
+# ---- Base de données (PostgreSQL / PostGIS) ----
+sqlalchemy>=2.0
+geoalchemy2>=0.15
+pg8000>=1.31
+
+# ---- ML / données ----
+scikit-learn>=1.4
+# Note : pin pandas/numpy aux versions validées sous Windows
+# (les wheels plus récents peuvent être bloqués par la politique de contrôle d'app Windows).
+pandas==3.0.2
+numpy==2.4.4
+joblib>=1.3
+scipy>=1.11
+# Pin prophet 1.3.0 : les versions plus récentes (1.4+) téléchargent un
+# binaire Stan bloqué par la politique de contrôle d'application de Windows
+# (WinError 4551). 1.3.0+cmdstanpy 1.3.0 est confirmé fonctionnel.
+prophet==1.3.0
+
+# ---- Collecte satellite ----
+earthengine-api>=0.1.400
+
+# ---- Recommandations IA ----
+groq>=0.14
+
+# ---- Planification ----
+apscheduler>=3.10
+
+# ---- Enrichissement géospatial ----
+shapely>=2.0
+
+# ---- Tests ----
+pytest>=8.0
+httpx>=0.27
