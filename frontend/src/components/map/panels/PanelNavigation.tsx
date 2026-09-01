@@ -12,6 +12,16 @@ const profiles: Array<{ key: NavigationProfile; label: string; icon: typeof Car 
 // Centre de Ouagadougou : origine de repli quand le GPS est indisponible.
 const FALLBACK_ORIGIN = { lat: 12.3647, lng: -1.5221 };
 
+// Le backend est heberge sur une offre gratuite qui se met en veille : le
+// premier appel peut demander une cinquantaine de secondes. On borne quand
+// meme l'attente pour ne jamais laisser l'interface bloquee indefiniment.
+const ROUTE_TIMEOUT_MS = 60000;
+
+function createTimeoutSignal(ms: number): AbortSignal | undefined {
+  const ctor = AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal };
+  return typeof ctor.timeout === "function" ? ctor.timeout(ms) : undefined;
+}
+
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${Math.max(1, Math.round(seconds))} s`;
   const minutes = Math.round(seconds / 60);
@@ -88,6 +98,7 @@ export function PanelNavigation({
         start: origin,
         end: { lat: source.lat, lng: source.lng },
         profile,
+        signal: createTimeoutSignal(ROUTE_TIMEOUT_MS),
       });
       const nextRoute: NavigationRoute = {
         ...response,
@@ -407,6 +418,8 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+const GEOLOCATION_TIMEOUT_MS = 12000;
+
 function readCurrentPosition(previous: NavigationPosition | null): Promise<NavigationPosition> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -414,10 +427,28 @@ function readCurrentPosition(previous: NavigationPosition | null): Promise<Navig
       return;
     }
 
+    // Garde-temps maison : si l'utilisateur IGNORE la fenetre de permission
+    // (fermeture sans repondre), plusieurs navigateurs n'appellent aucun des
+    // deux callbacks et l'option `timeout` native ne se declenche pas. Sans
+    // ce garde-fou la promesse ne se resout jamais et l'interface reste
+    // bloquee sur le spinner.
+    let settled = false;
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      action();
+    };
+
+    const timer = setTimeout(
+      () => finish(() => reject(new Error("Position GPS non obtenue (delai depasse)"))),
+      GEOLOCATION_TIMEOUT_MS,
+    );
+
     navigator.geolocation.getCurrentPosition(
-      (position) => resolve(toNavigationPosition(position, previous)),
-      () => reject(new Error("Autorise l'acces a ta position GPS pour calculer l'itineraire")),
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 },
+      (position) => finish(() => resolve(toNavigationPosition(position, previous))),
+      () => finish(() => reject(new Error("Autorise l'acces a ta position GPS pour calculer l'itineraire"))),
+      { enableHighAccuracy: true, timeout: GEOLOCATION_TIMEOUT_MS, maximumAge: 60000 },
     );
   });
 }
