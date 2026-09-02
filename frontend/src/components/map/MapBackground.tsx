@@ -1,6 +1,16 @@
 ﻿import { useEffect, useRef, useState } from "react";
 import type { NavigationRoute, Source } from "./types";
 
+// Formes réelles des plans d'eau (polygones OSM), générées par
+// `scripts/sync_water_geometries.py`. Chargées une seule fois et mises en cache.
+const waterShapesPromise = fetch(`${import.meta.env.BASE_URL}water-polygons.geojson`)
+  .then((r) => (r.ok ? r.json() : null))
+  .catch(() => null);
+
+function statusColor(statut: Source["statut"]): string {
+  return statut === "actif" ? "#62e6a6" : statut === "à risque" ? "#f6c65b" : "#ff6b6b";
+}
+
 export function MapBackground({
   sources,
   navigationRoute,
@@ -43,17 +53,53 @@ export function MapBackground({
       const L = (await import("leaflet")).default;
       if (layerRef.current) leafletMap.current.removeLayer(layerRef.current);
       const group = L.layerGroup();
+
+      // Formes réelles (polygones OSM) indexées par id de source.
+      const shapes = new Map<number, [number, number][]>();
+      const geojson = await waterShapesPromise;
+      for (const feature of geojson?.features ?? []) {
+        const ring = feature?.geometry?.coordinates?.[0];
+        if (!Array.isArray(ring) || ring.length < 4) continue;
+        shapes.set(feature.properties.source_id,
+          ring.map(([lng, lat]: [number, number]) => [lat, lng] as [number, number]));
+      }
+
       sources.forEach((s) => {
-        const color = s.statut === "actif" ? "#62e6a6" : s.statut === "à risque" ? "#f6c65b" : "#ff6b6b";
-        const marker = L.circleMarker([s.lat, s.lng], {
-          radius: 7,
-          color,
-          weight: 3,
-          fillColor: color,
-          fillOpacity: 0.78,
-        });
-        marker.on("click", () => onSourceClick(s));
-        marker.addTo(group);
+        const color = statusColor(s.statut);
+        const ring = shapes.get(s.id);
+        if (ring) {
+          // Vraie forme du plan d'eau, colorée selon l'état de la source.
+          const polygon = L.polygon(ring, {
+            color,
+            weight: 2,
+            opacity: 0.9,
+            fillColor: color,
+            fillOpacity: 0.24,
+          });
+          polygon.on("click", () => onSourceClick(s));
+          polygon.bindTooltip(`${s.label} · ${s.statut}`.toUpperCase(), { sticky: true });
+          polygon.addTo(group);
+          // Pastille centrale pour repérer précisément la source.
+          const dot = L.circleMarker([s.lat, s.lng], {
+            radius: 5,
+            color: "#06080d",
+            weight: 2,
+            fillColor: color,
+            fillOpacity: 1,
+          });
+          dot.on("click", () => onSourceClick(s));
+          dot.addTo(group);
+        } else {
+          const marker = L.circleMarker([s.lat, s.lng], {
+            radius: 7,
+            color,
+            weight: 3,
+            fillColor: color,
+            fillOpacity: 0.78,
+          });
+          marker.on("click", () => onSourceClick(s));
+          marker.addTo(group);
+        }
       });
       group.addTo(leafletMap.current);
       layerRef.current = group;
