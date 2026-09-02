@@ -51,6 +51,8 @@ export function PanelNavigation({
   const [loadingId, setLoadingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [originNotice, setOriginNotice] = useState<string | null>(null);
+  const [fallbackTarget, setFallbackTarget] = useState<Source | null>(null);
+  const [geoStatus, setGeoStatus] = useState<string | null>(null);
 
   const routeRef = useRef<NavigationRoute | null>(null);
   const watchRef = useRef<number | null>(null);
@@ -72,23 +74,33 @@ export function PanelNavigation({
     onRouteChange(nextRoute);
   }
 
-  async function guideTo(source: Source) {
+  async function guideTo(source: Source, forcedOrigin?: NavigationPosition) {
     setError(null);
     setLoadingId(source.id);
     onSelect(source);
     stopTracking(false);
 
     try {
-      // Le GPS ne doit pas etre un point de rupture : navigateur sans capteur,
-      // permission refusee ou timeout ne doivent pas empecher de consulter un
-      // itineraire. On retombe alors sur un point de depart par defaut.
+      // La position reelle est la regle. Si elle echoue, on n'invente PAS un
+      // point de depart : on explique la cause et on laisse l'utilisateur
+      // choisir explicitement un depart de substitution.
       let origin: NavigationPosition;
-      try {
-        origin = await readCurrentPosition(lastPositionRef.current);
-        setOriginNotice(null);
-      } catch {
-        origin = { ...FALLBACK_ORIGIN, accuracy: undefined, heading: 0, speed: null, timestamp: Date.now() };
-        setOriginNotice("Position GPS indisponible : depart simule depuis le centre de Ouagadougou.");
+      if (forcedOrigin) {
+        origin = forcedOrigin;
+        setOriginNotice("Depart choisi manuellement : centre de Ouagadougou (position reelle indisponible).");
+      } else {
+        try {
+          setGeoStatus("Recherche de ta position (GPS puis reseau)...");
+          origin = await readCurrentPosition(lastPositionRef.current);
+          setGeoStatus(null);
+          setOriginNotice(null);
+          setFallbackTarget(null);
+        } catch (geoError) {
+          setGeoStatus(null);
+          setError(geoError instanceof Error ? geoError.message : "Position indisponible");
+          setFallbackTarget(source);
+          return;
+        }
       }
       const currentPlace = await fetchPlaceName(origin);
       setPlaceName(currentPlace);
@@ -394,6 +406,13 @@ export function PanelNavigation({
         ))}
       </div>
 
+      {geoStatus && !error && (
+        <div className="flex items-center gap-2 rounded-md border border-[#3a424d] bg-[#1d2229] p-3 text-sm text-[#a3afbd]">
+          <Loader2 className="size-4 animate-spin text-[#9fc9ea]" />
+          {geoStatus}
+        </div>
+      )}
+
       {originNotice && !error && (
         <div className="rounded-md border border-[#7a6220] bg-[#251f0f] p-3 text-sm text-[#e3b341]">
           {originNotice}
@@ -401,8 +420,26 @@ export function PanelNavigation({
       )}
 
       {error && (
-        <div className="rounded-md border border-[#7f3535] bg-[#2a1115] p-3 text-sm text-[#ffb4b4]">
-          {error}
+        <div className="space-y-3 rounded-md border border-[#7f3535] bg-[#2a1115] p-3 text-sm text-[#ffb4b4]">
+          <div>{error}</div>
+          {fallbackTarget && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => guideTo(fallbackTarget)}
+                className="rounded-md border border-[#9fc9ea]/60 px-3 py-2 text-xs font-medium text-[#9fc9ea] transition hover:bg-[#20262d]"
+              >
+                Reessayer avec ma position
+              </button>
+              <button
+                onClick={() => guideTo(fallbackTarget, {
+                  ...FALLBACK_ORIGIN, accuracy: undefined, heading: 0, speed: null, timestamp: Date.now(),
+                })}
+                className="rounded-md border border-[#3a424d] px-3 py-2 text-xs font-medium text-[#a3afbd] transition hover:bg-[#20262d] hover:text-white"
+              >
+                Partir du centre de Ouagadougou
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -418,20 +455,13 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-const GEOLOCATION_TIMEOUT_MS = 12000;
-
-function readCurrentPosition(previous: NavigationPosition | null): Promise<NavigationPosition> {
+/** Un seul essai de geolocalisation, avec garde-temps qui ne peut pas rester bloque. */
+function requestPosition(options: PositionOptions, timeoutMs: number): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error("La geolocalisation n'est pas supportee par ce navigateur"));
-      return;
-    }
-
     // Garde-temps maison : si l'utilisateur IGNORE la fenetre de permission
     // (fermeture sans repondre), plusieurs navigateurs n'appellent aucun des
     // deux callbacks et l'option `timeout` native ne se declenche pas. Sans
-    // ce garde-fou la promesse ne se resout jamais et l'interface reste
-    // bloquee sur le spinner.
+    // ce garde-fou la promesse ne se resout jamais.
     let settled = false;
     const finish = (action: () => void) => {
       if (settled) return;
@@ -441,16 +471,110 @@ function readCurrentPosition(previous: NavigationPosition | null): Promise<Navig
     };
 
     const timer = setTimeout(
-      () => finish(() => reject(new Error("Position GPS non obtenue (delai depasse)"))),
-      GEOLOCATION_TIMEOUT_MS,
+      () => finish(() => reject(new GeolocationPositionErrorLike(3))),
+      timeoutMs,
     );
 
     navigator.geolocation.getCurrentPosition(
-      (position) => finish(() => resolve(toNavigationPosition(position, previous))),
-      () => finish(() => reject(new Error("Autorise l'acces a ta position GPS pour calculer l'itineraire"))),
-      { enableHighAccuracy: true, timeout: GEOLOCATION_TIMEOUT_MS, maximumAge: 60000 },
+      (position) => finish(() => resolve(position)),
+      (error) => finish(() => reject(error)),
+      options,
     );
   });
+}
+
+/** Erreur equivalente a GeolocationPositionError (code 3 = TIMEOUT). */
+class GeolocationPositionErrorLike extends Error {
+  code: number;
+  constructor(code: number) {
+    super("Geolocalisation indisponible");
+    this.code = code;
+  }
+}
+
+async function readCurrentPosition(previous: NavigationPosition | null): Promise<NavigationPosition> {
+  if (!navigator.geolocation) {
+    throw new Error("La geolocalisation n'est pas supportee par ce navigateur");
+  }
+  if (!window.isSecureContext) {
+    throw new Error("La geolocalisation exige une connexion securisee (HTTPS)");
+  }
+
+  // Deux tentatives : d'abord le GPS precis, puis - s'il echoue - le
+  // positionnement reseau (Wi-Fi / IP), bien plus fiable sur un poste fixe
+  // ou en interieur. C'est l'echec de la 1re tentative, seule utilisee
+  // auparavant, qui declenchait le repli sur une position simulee.
+  const attempts: Array<{ options: PositionOptions; timeout: number }> = [
+    { options: { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }, timeout: 11000 },
+    { options: { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 }, timeout: 21000 },
+  ];
+
+  let lastError: unknown = null;
+  for (const attempt of attempts) {
+    try {
+      const position = await requestPosition(attempt.options, attempt.timeout);
+      return toNavigationPosition(position, previous);
+    } catch (error) {
+      lastError = error;
+      // Permission explicitement refusee : reessayer ne sert a rien.
+      if (typeof error === "object" && error !== null && (error as { code?: number }).code === 1) break;
+    }
+  }
+
+  throw new Error(await describeGeolocationError(lastError));
+}
+
+/** Message precis selon la cause reelle, plutot qu'un texte generique. */
+async function describeGeolocationError(error: unknown): Promise<string> {
+  const code = typeof error === "object" && error !== null ? (error as { code?: number }).code : undefined;
+
+  // Cause reelle la plus frequente sur telephone : la page est ouverte dans
+  // le navigateur integre d'une app (WhatsApp, Messenger, Instagram, TikTok,
+  // Telegram...) qui bloque la geolocalisation.
+  const webview = detectEmbeddedBrowser();
+  if (webview) {
+    return `${webview} Pour utiliser l'itineraire, ouvre ce lien dans un vrai navigateur (Chrome ou Safari).`;
+  }
+
+  if (code === 1) {
+    return "Acces a la position refuse. Autorise la localisation pour ce site (icone de cadenas dans la barre d'adresse, ou Reglages > Donnees du site / > Localisation), puis reessaie.";
+  }
+
+  // L'API Permissions permet de distinguer un refus memorise d'une panne.
+  try {
+    const status = await navigator.permissions?.query({ name: "geolocation" as PermissionName });
+    if (status?.state === "denied") {
+      return "La localisation est bloquee pour ce site. Sur iPhone : Reglages > Safari > Localisation > Autoriser. Sur Android : icone cadenas > Autorisations > Localisation. Puis reessaie.";
+    }
+  } catch {
+    // API Permissions indisponible : on continue avec le message generique.
+  }
+
+  if (code === 2) return "Position indisponible : aucun signal de localisation. Active le GPS ou le Wi-Fi, puis reessaie.";
+  if (code === 3) return "Delai depasse pour obtenir la position. Reessaie, de preference a l'exterieur ou avec le Wi-Fi actif.";
+  return "Impossible d'obtenir ta position. Verifie que la localisation est activee, puis reessaie.";
+}
+
+/** Lance la page dans un environnement qui bloque la geolocalisation ? */
+function detectEmbeddedBrowser(): string | null {
+  // Page ouverte dans un cadre (<iframe>`geolocation` non accordé) : Chrome
+  // et Android bloquent la géolocalisation des iframes sans autorisation.
+  try {
+    if (window.self !== window.top) {
+      return "Cette page est ouverte dans un encart integre qui ne permet pas la geolocalisation.";
+    }
+  } catch {
+    return "Cette page est ouverte dans un cadre integre qui ne permet pas la geolocalisation.";
+  }
+
+  // Navigateurs embarqués des messageries / réseaux sociaux (WebView).
+  const ua = navigator.userAgent || "";
+  const embedded = /WhatsApp|Instagram|FBAN|FBAV|TikTok|Telegram|MicroMessenger|snapchat|Line\/|JSBridge|okhttp|; ?wv\)?/i.test(ua);
+  if (embedded) {
+    return "Cette page s'ouvre dans le navigateur integre d'une application, qui bloque souvent la position.";
+  }
+
+  return null;
 }
 
 function toNavigationPosition(position: GeolocationPosition, previous: NavigationPosition | null): NavigationPosition {
