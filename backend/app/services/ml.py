@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import json
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -18,9 +18,12 @@ def _resolve_model_dir() -> Optional[Path]:
     """Répertoire du modèle v2 le plus récent (ml/runs/latest ou artifacts par run)."""
     if DEFAULT_RUN.exists() and (DEFAULT_RUN / "model.pkl").exists():
         return DEFAULT_RUN
-    # Fallback: premier run trié par date
+    # Fallback: run v2 le plus récent (les runs v3 `forecast_*` ont un autre format)
     if MODELS_DIR.exists():
-        runs = sorted(MODELS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+        runs = sorted(
+            (p for p in MODELS_DIR.iterdir() if p.is_dir() and p.name.startswith("run_")),
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        )
         for run in runs:
             if (run / "model.pkl").exists():
                 return run
@@ -58,14 +61,12 @@ class PeriodsUntilDryService:
             self.le_ville = joblib.load(model_dir / "encoder_ville.pkl")
             feat_file = model_dir / "features.json"
             if feat_file.exists():
-                import json
                 with open(feat_file, "r", encoding="utf-8") as f:
                     self.features = json.load(f)
             meta_file = model_dir / "metadata.json"
             if meta_file.exists():
-                import json as _json
                 with open(meta_file, "r", encoding="utf-8") as f:
-                    self.metadata = _json.load(f)
+                    self.metadata = json.load(f)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Échec du chargement du modèle ML")
             raise MLUnavailableError(f"Modèle ML indisponible : {exc}") from exc
@@ -73,17 +74,33 @@ class PeriodsUntilDryService:
         logger.info("Modèle ML v2 chargé depuis %s", model_dir)
 
     # ------------------------------------------------------------------ #
+    def _encode_saison(self, data: dict) -> float:
+        """Encode la saison avec l'encodeur de l'entraînement (et non une valeur figée à 0)."""
+        if data.get("saison_encoded") is not None:
+            return float(data["saison_encoded"])
+        saison = data.get("saison")
+        if self.le_saison is not None and saison in set(self.le_saison.classes_):
+            return float(self.le_saison.transform([saison])[0])
+        return 0.0
+
     def _to_vector(self, data: dict) -> np.ndarray:
         """Construit le vecteur de features dans l'ORDRE exact du modèle (12 features).
 
         L'ordre doit correspondre à FEATURES dans ml/train.py :
         ndwi, ndwi_t1, ndwi_t2, ndwi_t3, pente_court, pente_moyen, ndwi_moy_src,
         ndvi, saison_encoded, ville_encoded, latitude, longitude
+
+        `_get` teste `is None` : un NDWI de 0.0 est une mesure valide, pas une
+        valeur manquante (l'ancien `or` le remplaçait silencieusement).
         """
-        ndwi = data.get("ndwi_moyen") or 0.0
-        ndwi_t1 = data.get("ndwi_t1") or ndwi
-        ndwi_t2 = data.get("ndwi_t2") or ndwi
-        ndwi_t3 = data.get("ndwi_t3") or ndwi
+        def _get(key: str, default: float) -> float:
+            value = data.get(key)
+            return float(default if value is None else value)
+
+        ndwi = _get("ndwi_moyen", 0.0)
+        ndwi_t1 = _get("ndwi_t1", ndwi)
+        ndwi_t2 = _get("ndwi_t2", ndwi)
+        ndwi_t3 = _get("ndwi_t3", ndwi)
         return np.array(
             [
                 [
@@ -93,16 +110,25 @@ class PeriodsUntilDryService:
                     ndwi_t3,                                   # ndwi_t3
                     ndwi - ndwi_t1,                            # pente_court
                     ndwi - ndwi_t3,                            # pente_moyen
-                    data.get("ndwi_moy_src") or ndwi,          # ndwi_moy_src
-                    data.get("ndvi_moyen") or 0.0,             # ndvi
-                    data.get("saison_encoded") or 0.0,         # saison_encoded
-                    data.get("ville_encoded") or 0.0,          # ville_encoded
-                    data.get("latitude") or 12.36,             # latitude
-                    data.get("longitude") or -1.52,            # longitude
+                    _get("ndwi_moy_src", ndwi),                # ndwi_moy_src
+                    _get("ndvi_moyen", 0.0),                   # ndvi
+                    self._encode_saison(data),                 # saison_encoded
+                    _get("ville_encoded", 0.0),                # ville_encoded
+                    _get("latitude", 12.36),                   # latitude
+                    _get("longitude", -1.52),                  # longitude
                 ]
             ],
             dtype=float,
         )
+
+    @property
+    def _expects_scaled_input(self) -> bool:
+        """ml/train.py n'entraîne sur données normalisées que le GradientBoosting.
+
+        La forêt aléatoire est entraînée sur les données brutes : lui appliquer
+        le scaler à l'inférence fausse toutes ses prédictions.
+        """
+        return self.scaler is not None and self.metadata.get("model") == "GradientBoosting"
 
     # ------------------------------------------------------------------ #
     def predict_periods_until_dry(self, data: dict) -> Optional[int]:
@@ -110,7 +136,7 @@ class PeriodsUntilDryService:
         if self.model is None:
             return None
         vector = self._to_vector(data)
-        if self.scaler is not None:
+        if self._expects_scaled_input:
             vector = self.scaler.transform(vector)
         pred = float(self.model.predict(vector)[0])
         return int(max(1, min(20, round(pred))))

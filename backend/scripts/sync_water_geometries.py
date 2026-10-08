@@ -34,7 +34,7 @@ logger = logging.getLogger("sync_water_geometries")
 
 from sqlalchemy import text
 
-from app.database import SessionLocal, engine, ensure_postgis
+from app.database import SessionLocal, ensure_postgis
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_PUBLIC = BACKEND_ROOT.parent / "frontend" / "public"

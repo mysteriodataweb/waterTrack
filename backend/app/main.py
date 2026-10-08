@@ -9,6 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .database import create_all
 from .router import api_router
+from .tls import use_system_certificates
+
+# Avant tout appel sortant (Groq, OpenRouteService, Earth Engine).
+use_system_certificates()
 
 logging.basicConfig(
     level=logging.INFO,

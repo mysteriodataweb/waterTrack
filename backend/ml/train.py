@@ -29,7 +29,6 @@ import joblib
 
 from app.database import SessionLocal
 from app.models import NdwiObservation, WaterSource
-from app.config import settings
 
 DRY_NDWI = 0.2
 RUNS_DIR = Path(__file__).resolve().parent / "runs"

@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -76,7 +75,7 @@ def get_prediction(
 
 @router.post("/admin/collect")
 def trigger_collection(_: str = Depends(require_api_key)):
-    """Déclenche une collecte satellite manuelle de la période courante."""
+    """[v2, historique] Collecte NDWI semestrielle. Le suivi v3 passe par /admin/monthly-update."""
     from ..collectors.ingest import collect_latest_period
 
     inserted = collect_latest_period()

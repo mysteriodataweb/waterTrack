@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
-from sqlalchemy.dialects import postgresql
 
 from .config import settings
 
@@ -47,7 +46,9 @@ def ensure_postgis() -> None:
 
 
 def create_all() -> None:
-    from . import models  # noqa: F401  (enregistre les modèles sur Base)
+    import importlib
 
+    # L'import enregistre les tables (v2 et v3) sur Base.metadata
+    importlib.import_module(f"{__package__}.models")
     ensure_postgis()
     Base.metadata.create_all(bind=engine)

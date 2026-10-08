@@ -27,7 +27,7 @@ from sqlalchemy import select
 from geoalchemy2 import WKTElement  # noqa: F401
 
 from app.collectors.earth_engine import EarthEngineClient
-from app.database import SessionLocal, create_all, ensure_postgis
+from app.database import SessionLocal, create_all
 from app.models import WaterSource, NdwiObservation
 
 # Périodes semestrielles depuis 2020 (début de l'historique satellite).

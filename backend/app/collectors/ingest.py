@@ -14,9 +14,7 @@ import logging
 from datetime import date, datetime
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from ..config import settings
 from ..database import SessionLocal
 from ..models import WaterSource, NdwiObservation
 from .earth_engine import EarthEngineClient
@@ -61,10 +59,13 @@ def collect_latest_period() -> int:
         ]
         rows = client.collect_period(debut, fin, label, saison, payload)
 
+        # collect_period renvoie les coordonnées exactes qu'on lui a fournies :
+        # correspondance directe, sans recherche approximative du plus proche voisin.
+        by_coords = {(s.longitude, s.latitude): s for s in sources}
+
         inserted = 0
         for r in rows:
-            # Retrouver la source par proximité GPS
-            source = _nearest_source(db, sources, r["longitude"], r["latitude"])
+            source = by_coords.get((r["longitude"], r["latitude"]))
             if source is None:
                 continue
             if (source.id, label) in existing:
@@ -90,20 +91,6 @@ def collect_latest_period() -> int:
         raise
     finally:
         db.close()
-
-
-def _nearest_source(db: Session, sources: list[WaterSource], lon: float, lat: float) -> WaterSource | None:
-    """Trouve la source la plus proche d'un point GPS (fallback par distance)."""
-    if not sources:
-        return None
-    best = None
-    best_dist = float("inf")
-    for s in sources:
-        d = (s.longitude - lon) ** 2 + (s.latitude - lat) ** 2
-        if d < best_dist:
-            best_dist = d
-            best = s
-    return best
 
 
 collect_weekly_job = collect_latest_period  # alias utilisé par le scheduler

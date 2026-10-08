@@ -87,6 +87,71 @@ class TarissementPrediction(BaseModel):
     recommandations: Optional[dict[str, str]] = None
 
 
+Validation = Literal["a_valider", "valide", "rejete"]
+
+
+class FillForecastHorizon(BaseModel):
+    horizon: int = Field(ge=1)
+    target_month: str
+    fill_pred: float
+    fill_lo80: float
+    fill_hi80: float
+    p_critical: float = Field(ge=0, le=1)
+    status: Status
+    area_pred_ha: Optional[float] = None
+
+
+class FillForecast(BaseModel):
+    """Prévision v3 du taux de remplissage (surface / surface de référence)."""
+    reservoir_id: str
+    source_id: Optional[int] = None
+    issue_month: str
+    fill_now: float
+    critical_fill: float
+    model_version: Optional[str] = None
+    horizons: list[FillForecastHorizon]
+
+
+class ReservoirSummary(BaseModel):
+    id: str
+    origin: Literal["application", "JRC"]
+    validation: Validation
+    validation_note: Optional[str] = None
+    modelable: bool
+    a_ref_ha: Optional[float] = None
+    lat: float
+    lon: float
+    source_ids: list[int]
+    last_month: Optional[str] = None
+    fill_last: Optional[float] = None
+    status: Optional[Status] = None
+
+
+class AreaPoint(BaseModel):
+    month: str
+    area_ha: Optional[float] = None
+    fill: Optional[float] = None
+    area_source: str
+    volume_m3: Optional[float] = None
+    precip_mm: Optional[float] = None
+
+
+class ReservoirHistory(BaseModel):
+    reservoir_id: str
+    a_ref_ha: Optional[float] = None
+    points: list[AreaPoint]
+
+
+class ValidationUpdate(BaseModel):
+    validation: Validation
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class MonthlyUpdateRequest(BaseModel):
+    month: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    force: bool = False
+
+
 class NavigationStep(BaseModel):
     instruction: str
     distance: float

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import date
@@ -9,6 +10,7 @@ from typing import Optional
 import ee
 
 from ..config import settings
+from ..tls import use_system_certificates
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +41,19 @@ class EarthEngineClient:
         if self._initialized:
             return
         _clear_broken_proxy()
+        use_system_certificates()
         try:
-            ee.Initialize(project=settings.gee_project)
+            if settings.gee_service_account_key:
+                # Serveur (Render...) : compte de service, pas d'authentification interactive.
+                key = settings.gee_service_account_key
+                key_data = Path(key).read_text(encoding="utf-8") if Path(key).is_file() else key
+                email = json.loads(key_data)["client_email"]
+                credentials = ee.ServiceAccountCredentials(email, key_data=key_data)
+                ee.Initialize(credentials, project=settings.gee_project)
+            else:
+                ee.Initialize(project=settings.gee_project)
+            # Délai maximal par requête : une connexion suspendue ne doit pas bloquer le scheduler
+            ee.data.setDeadline(600_000)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 "Impossible d'initialiser Google Earth Engine. "
@@ -138,7 +151,7 @@ class EarthEngineClient:
         stats = ndwi.addBands(ndvi).reduceRegions(
             collection=pts,
             reducer=ee.Reducer.mean(),
-            scale=20,
+            scale=10,           # B3, B4, B8 sont natives à 10 m
         )
 
         outcomes = stats.getInfo().get("features", [])

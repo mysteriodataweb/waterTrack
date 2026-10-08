@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select, text
+import json
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..database import get_db
+from ..deps import require_api_key
 from ..models import WaterSource
 from ..schemas import (
     WaterSourceResponse,
@@ -16,12 +19,8 @@ from ..schemas import (
 router = APIRouter()
 
 
-def _row_to_response(db: Session, source: WaterSource) -> WaterSourceResponse:
-    # Requête unique avec ST_AsGeoJSON + ST_Centroid (fini le N+1).
-    geom = db.execute(
-        text("SELECT ST_AsGeoJSON(geometry) FROM water_sources WHERE id = :id"),
-        {"id": source.id},
-    ).scalar()
+def _row_to_response(source: WaterSource, geom: str | None) -> WaterSourceResponse:
+    """`geom` : GeoJSON déjà calculé par ST_AsGeoJSON dans la requête principale."""
     return WaterSourceResponse(
         id=source.id,
         longitude=source.longitude,
@@ -33,7 +32,7 @@ def _row_to_response(db: Session, source: WaterSource) -> WaterSourceResponse:
         risk_score=source.risk_score or 0.0,
         status=_normalize_status(source.status or "actif"),
         date_analyse=source.date_analyse,
-        geometry=__import__("json").loads(geom) if geom else None,
+        geometry=json.loads(geom) if geom else None,
     )
 
 
@@ -63,36 +62,50 @@ def get_water_sources(
         query = query.where(WaterSource.status == status)
 
     total = db.execute(select(func.count()).select_from(query.subquery())).scalar() or 0
+    # Géométrie GeoJSON calculée dans la même requête (une seule requête par page).
     rows = db.execute(
-        query.order_by(WaterSource.id).offset((page - 1) * page_size).limit(page_size)
-    ).scalars().all()
+        query.add_columns(func.ST_AsGeoJSON(WaterSource.geometry))
+        .order_by(WaterSource.id).offset((page - 1) * page_size).limit(page_size)
+    ).all()
 
     return PaginatedSources(
         total=total,
         page=page,
         page_size=page_size,
-        items=[_row_to_response(db, s) for s in rows],
+        items=[_row_to_response(s, geom) for s, geom in rows],
     )
 
 
 @router.get("/water-sources/{source_id}", response_model=WaterSourceResponse)
 def get_water_source(source_id: int, db: Session = Depends(get_db)):
-    source = db.get(WaterSource, source_id)
-    if not source:
+    row = db.execute(
+        select(WaterSource, func.ST_AsGeoJSON(WaterSource.geometry)).where(WaterSource.id == source_id)
+    ).first()
+    if not row:
         raise HTTPException(status_code=404, detail="Source non trouvée")
-    return _row_to_response(db, source)
+    return _row_to_response(*row)
 
 
 @router.post("/admin/recompute", response_model=AdminUpdateResponse)
-def recompute_all_scores(db: Session = Depends(get_db)):
-    """Recalcule risk_score/status à partir de l'historique NDWI réel.
+def recompute_all_scores(db: Session = Depends(get_db), _: str = Depends(require_api_key)):
+    """Recalcule risk_score/status des sources.
+
+    v3 (si des prévisions existent) : statut = prévision à 1 mois du réservoir de la
+    source, risk_score = probabilité calibrée d'atteindre le niveau critique.
+    Sinon (repli v2) : calcul à partir de l'historique NDWI réel, décrit ci-dessous.
 
     On n'utilise plus de seuil absolu sur `ndwi_moyen` (moyenne toutes saisons
     confondues) : ce chiffre est dominé par la saisonnalité et ne dit rien de
     la santé d'une source. Voir `services/risk.py`.
     """
     from ..models import NdwiObservation
+    from ..services.reservoirs import apply_forecasts_to_sources
     from ..services.risk import compute_risk_from_history
+
+    updated = apply_forecasts_to_sources(db)
+    if updated:
+        db.commit()
+        return AdminUpdateResponse(updated=updated, message=f"{updated} sources mises à jour (prévisions v3)")
 
     rows = db.execute(
         select(

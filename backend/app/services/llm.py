@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 from ..config import settings
@@ -44,6 +45,17 @@ Indique clairement :
 """
 
 
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", flags=re.DOTALL | re.IGNORECASE)
+
+
+def _strip_reasoning(content: Optional[str]) -> Optional[str]:
+    """Retire le raisonnement `<think>...</think>` des modèles de type Qwen3."""
+    if not content:
+        return None
+    text = _THINK_BLOCK.sub("", content).strip()
+    return text or None
+
+
 def generer_recommandation_groq(prediction: dict, profil: str) -> Optional[str]:
     """Recommandation via Groq. Retourne None si le service est indisponible."""
     if not settings.groq_api_key:
@@ -59,11 +71,11 @@ def generer_recommandation_groq(prediction: dict, profil: str) -> Optional[str]:
     try:
         client = Groq(api_key=settings.groq_api_key)
         message = client.chat.completions.create(
-            model="qwen/qwen3.8-27b",
+            model=settings.groq_model,
             messages=[{"role": "user", "content": _build_prompt(prediction, profil)}],
             max_tokens=500,
         )
-        return message.choices[0].message.content.strip()
+        return _strip_reasoning(message.choices[0].message.content)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Recommandation Groq indisponible : %s", exc)
         return None

@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from ..config import settings
-from .ingest import collect_latest_period
+from .monthly import run_monthly_update
 
 logger = logging.getLogger(__name__)
 
 _scheduler: BackgroundScheduler | None = None
+
+
+def _monthly_job() -> None:
+    try:
+        run_monthly_update()
+    except Exception:  # noqa: BLE001  (déjà journalisé ; le scheduler doit survivre)
+        logger.error("Mise à jour mensuelle v3 en échec, nouvel essai au prochain passage")
 
 
 def start_scheduler() -> BackgroundScheduler:
@@ -22,19 +27,17 @@ def start_scheduler() -> BackgroundScheduler:
         return _scheduler
 
     scheduler = BackgroundScheduler()
-
-    # Collecte hebdomadaire des dernières mesures NDWI.
     scheduler.add_job(
-        collect_latest_period,
+        _monthly_job,
         IntervalTrigger(hours=settings.collect_hours),
-        id="collect_weekly",
+        id="monthly_update_v3",
         replace_existing=True,
         max_instances=1,
+        coalesce=True,
     )
-
     _scheduler = scheduler
     scheduler.start()
-    logger.info("Scheduler démarré (collecte toutes les %d h)", settings.collect_hours)
+    logger.info("Scheduler démarré (mise à jour v3 vérifiée toutes les %d h)", settings.collect_hours)
     return scheduler
 
 

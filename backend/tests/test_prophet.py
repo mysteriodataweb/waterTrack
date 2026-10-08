@@ -28,7 +28,6 @@ def test_periode_to_date():
 
 def test_prophet_unavailable_raises():
     """Sans données (moins de 3 périodes), on renvoie une erreur explicite."""
-    import pandas as pd
     from unittest.mock import MagicMock
 
     db = MagicMock()

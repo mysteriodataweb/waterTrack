@@ -11,6 +11,7 @@ venv/
 # Données & artifacts générés
 data/historique/
 data/*.geojson
+data/gee/
 app/models/*.pkl
 ml/runs/
 *.joblib

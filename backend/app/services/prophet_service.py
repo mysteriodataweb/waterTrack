@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -99,9 +98,10 @@ def _predict_fallback(db: Session, source_id: int, df: pd.DataFrame) -> dict:
         label = f"{y}-S{s}"
         last_year, last_sem = y, s
 
-        # Prolongement linéaire de la tendance historique.
+        # Prolongement linéaire de la tendance historique. Le NDWI est borné à
+        # [-1, 1] (et non à 0 : une valeur négative est une mesure physique valide).
         future_x = float(n - 1 + i)
-        ndwi_predit = max(0.0, float(intercept + slope * future_x))
+        ndwi_predit = min(1.0, max(-1.0, float(intercept + slope * future_x)))
 
         # Écart-type estimé à partir de l'erreur résiduelle du fit.
         resid = ndwi_values - (intercept + slope * x)
@@ -117,7 +117,7 @@ def _predict_fallback(db: Session, source_id: int, df: pd.DataFrame) -> dict:
         predictions.append({
             "periode": label,
             "ndwi_predit": round(ndwi_predit, 4),
-            "ndwi_min": round(max(0.0, ndwi_predit - 1.28 * sd), 4),
+            "ndwi_min": round(max(-1.0, ndwi_predit - 1.28 * sd), 4),
             "ndwi_max": round(ndwi_predit + 1.28 * sd, 4),
             "probabilite_tarissement": round(proba_first * 100, 1),
         })
