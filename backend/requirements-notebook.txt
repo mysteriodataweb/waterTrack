@@ -1,0 +1,6 @@
+# Dépendances du notebook de recherche (notebooks/WaterTracker_pipeline.ipynb).
+# En plus de requirements.txt :  pip install -r requirements.txt -r requirements-notebook.txt
+geopandas>=1.0        # SIG : reprojection UTM, jointures spatiales (sans GDAL pour les E/S)
+matplotlib>=3.8
+ipykernel>=6.29
+nbclient>=0.10        # exécution non interactive du notebook
