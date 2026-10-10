@@ -1,6 +1,7 @@
 services:
   # ============================================================
   # Backend API (FastAPI) - watertracker
+  # Le frontend est déployé sur Vercel (frontend/vercel.json), la base sur Neon.
   # ============================================================
   - type: web
     name: watertracker-api
@@ -15,6 +16,7 @@ services:
       # Base PostgreSQL/PostGIS hébergée chez Neon : coller l'URL de connexion fournie par Neon.
       - key: DATABASE_URL
         sync: false
+      # Adresse du frontend Vercel (sans barre finale), plusieurs adresses séparées par des virgules.
       - key: CORS_ORIGINS
         sync: false
       - key: API_KEY
@@ -27,21 +29,3 @@ services:
         sync: false
       - key: SCHEDULER_ENABLED
         value: "false"
-
-  # ============================================================
-  # Frontend statique (Vite build -> dist)
-  # ============================================================
-  - type: web
-    name: watertracker-web
-    runtime: static
-    rootDir: frontend
-    buildCommand: npm install && npm run build
-    staticPublishPath: dist
-    # Application à page unique : /carte et /bulletin sont servis par index.html.
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-    envVars:
-      - key: VITE_API_URL
-        sync: false
