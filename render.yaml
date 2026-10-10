@@ -31,13 +31,17 @@ services:
   # ============================================================
   # Frontend statique (Vite build -> dist)
   # ============================================================
-  - type: static
+  - type: web
     name: watertracker-web
-    plan: free
+    runtime: static
     rootDir: frontend
-    region: oregon
     buildCommand: npm install && npm run build
-    publishPath: dist
+    staticPublishPath: dist
+    # Application à page unique : /carte et /bulletin sont servis par index.html.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
     envVars:
       - key: VITE_API_URL
         sync: false
