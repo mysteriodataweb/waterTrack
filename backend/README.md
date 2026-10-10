@@ -52,11 +52,11 @@ uvicorn app.main:app --reload                # interactive docs: http://localhos
 
 ## v3 pipeline: from satellite to bulletin
 
-| Step | Command | Frequency |
-|---|---|---|
-| 1. Research: extraction 2019 -> today, analysis, training, model saved | `notebooks/WaterTracker_pipeline.ipynb` | once, then every year after the rainy season |
-| 2. Database load: reservoirs, monthly surfaces, forecasts, water-point statuses | `python -m scripts.load_v3` | after each notebook run |
-| 3. Monthly update: collection of the latest published month, forecasts, statuses | automatic (`SCHEDULER_ENABLED=true`) or `POST /api/admin/monthly-update` | every month |
+| Step                                                                             | Command                                                                  | Frequency                                    |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------- |
+| 1. Research: extraction 2019 -> today, analysis, training, model saved           | `notebooks/WaterTracker_pipeline.ipynb`                                  | once, then every year after the rainy season |
+| 2. Database load: reservoirs, monthly surfaces, forecasts, water-point statuses  | `python -m scripts.load_v3`                                              | after each notebook run                      |
+| 3. Monthly update: collection of the latest published month, forecasts, statuses | automatic (`SCHEDULER_ENABLED=true`) or `POST /api/admin/monthly-update` | every month                                  |
 
 The monthly update is **idempotent**: the scheduler checks it every `COLLECT_HOURS` hours
 and collects a month only once, as soon as ERA5-Land and CHIRPS have published it. The
@@ -67,24 +67,24 @@ collector and the notebook give identical values for all 96 reservoirs.
 
 ## Endpoints
 
-| Method | Path | Description | Auth |
-|---|---|---|---|
-| GET | `/api/health` | Database + external services status | no |
-| GET | `/api/reservoirs?origin=&validation=` | **v3** Water bodies: origin, validation, latest filling, status | no |
-| GET | `/api/reservoirs/{id}/history?start=&end=` | **v3** Monthly series: surface, filling, data source, volume, rainfall | no |
-| GET | `/api/reservoirs/{id}/forecast` | **v3** 1-3 month forecast: filling, 80 % interval, P(critical level) | no |
-| GET | `/api/water-sources/{id}/forecast` | **v3** Same forecast, through the application's water point | no |
-| GET | `/api/bulletin?month=&format=json\|csv` | **v3** Monthly bulletin, reservoirs ranked by risk; CSV export | no |
-| PATCH | `/api/admin/reservoirs/{id}/validation` | **v3** Inventory validation (`valide`, `rejete`, `a_valider`) | API key |
-| POST | `/api/admin/monthly-update` | **v3** Collect one month + forecasts + statuses | API key |
-| POST | `/api/admin/recompute` | Water-point statuses (v3 if forecasts exist, otherwise v2) | API key |
-| GET | `/api/water-sources?page=&zone=&status=` | Paginated water points | no |
-| GET | `/api/water-sources/{id}` | Water-point details | no |
-| GET | `/api/water-sources/{id}/prediction?profil=` | v2: Prophet drying-up forecast + Groq recommendation | no |
-| POST | `/api/predict` | v2: periods until drying up | API key |
-| POST | `/api/admin/collect` | v2: half-yearly NDWI collection | API key |
-| GET | `/api/report/summary` | Aggregated report | no |
-| POST | `/api/navigation/route`, GET `/api/navigation/reverse` | Routing, reverse geocoding | no |
+| Method | Path                                                   | Description                                                            | Auth    |
+| ------ | ------------------------------------------------------ | ---------------------------------------------------------------------- | ------- |
+| GET    | `/api/health`                                          | Database + external services status                                    | no      |
+| GET    | `/api/reservoirs?origin=&validation=`                  | **v3** Water bodies: origin, validation, latest filling, status        | no      |
+| GET    | `/api/reservoirs/{id}/history?start=&end=`             | **v3** Monthly series: surface, filling, data source, volume, rainfall | no      |
+| GET    | `/api/reservoirs/{id}/forecast`                        | **v3** 1-3 month forecast: filling, 80 % interval, P(critical level)   | no      |
+| GET    | `/api/water-sources/{id}/forecast`                     | **v3** Same forecast, through the application's water point            | no      |
+| GET    | `/api/bulletin?month=&format=json\|csv`                | **v3** Monthly bulletin, reservoirs ranked by risk; CSV export         | no      |
+| PATCH  | `/api/admin/reservoirs/{id}/validation`                | **v3** Inventory validation (`valide`, `rejete`, `a_valider`)          | API key |
+| POST   | `/api/admin/monthly-update`                            | **v3** Collect one month + forecasts + statuses                        | API key |
+| POST   | `/api/admin/recompute`                                 | Water-point statuses (v3 if forecasts exist, otherwise v2)             | API key |
+| GET    | `/api/water-sources?page=&zone=&status=`               | Paginated water points                                                 | no      |
+| GET    | `/api/water-sources/{id}`                              | Water-point details                                                    | no      |
+| GET    | `/api/water-sources/{id}/prediction?profil=`           | v2: Prophet drying-up forecast + Groq recommendation                   | no      |
+| POST   | `/api/predict`                                         | v2: periods until drying up                                            | API key |
+| POST   | `/api/admin/collect`                                   | v2: half-yearly NDWI collection                                        | API key |
+| GET    | `/api/report/summary`                                  | Aggregated report                                                      | no      |
+| POST   | `/api/navigation/route`, GET `/api/navigation/reverse` | Routing, reverse geocoding                                             | no      |
 
 **v3 statuses** (`ml/forecasting.py`): `tari` (dry) if the 1-month forecast filling is
 < 5 %, `à risque` (at risk) if the probability of falling below the critical threshold
@@ -101,7 +101,7 @@ frontend already use them.
 
 ## Research notebook
 
-`notebooks/WaterTracker_pipeline.ipynb` (in French) gathers the whole pipeline, documented
+`notebooks/WaterTracker_pipeline.ipynb` gathers the whole pipeline, documented
 for a research paper: quality-controlled GIS inventory, water surface at 10 m (sharpened
 MNDWI, native-10 m NDWI check, 10 m vs 20 m effect), Sentinel-2/Sentinel-1 fusion,
 CHIRPS/ERA5-Land forcings, hydrological analysis, audit of the v2 model, forecasting with
@@ -119,7 +119,21 @@ Outputs: `data/gee/` (Parquet cache, panel, inventory), `reports/figures/`,
 `ml/runs/forecast_<date>/` and `ml/runs/forecast_latest/` (`bundle.joblib`, `model_card.json`).
 The full 10 m extraction takes about 1 hour (parallel requests); later runs reuse the cache.
 
-## Deployment (Render)
+## Deployment (Render + Neon)
+
+The API runs on Render; the PostgreSQL/PostGIS database is hosted on Neon. Paste the
+connection string given by Neon as `DATABASE_URL` (locally in `.env`, on Render in the
+service environment): its `sslmode` / `channel_binding` options are handled by the app.
+
+To rebuild an empty database (new host, lost database):
+
+```bash
+python -m scripts.restore_sources   # water points from data/water_sources.json + NDWI history (Earth Engine, ~30 min)
+python -m scripts.load_v3           # reservoirs, monthly surfaces, forecasts
+```
+
+`scripts.copy_database` copies everything from another PostgreSQL database instead, when
+the old one is still reachable (`SOURCE_DATABASE_URL`).
 
 1. Database: run `python -m scripts.load_v3` with `DATABASE_URL` pointing to the
    production database (v3 tables are created automatically, v2 tables are untouched).

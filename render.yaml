@@ -12,10 +12,9 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # Base PostgreSQL/PostGIS hébergée chez Neon : coller l'URL de connexion fournie par Neon.
       - key: DATABASE_URL
-        fromDatabase:
-          name: watertracker-db
-          property: connectionString
+        sync: false
       - key: CORS_ORIGINS
         sync: false
       - key: API_KEY
@@ -42,10 +41,3 @@ services:
     envVars:
       - key: VITE_API_URL
         sync: false
-
-databases:
-  - name: watertracker-db
-    plan: free
-    region: oregon
-    databaseName: watertracker_db
-    majorVersion: 16
