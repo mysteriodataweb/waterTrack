@@ -45,11 +45,11 @@ frontend/    React + TypeScript frontend (Vite, shadcn/ui, Leaflet)
 (temporal validation, calibrated intervals, model card). See `backend/README.md`.
 
 ### Frontend — `frontend/`
-- React 19 + TypeScript + Vite
-- Map: Leaflet + OpenStreetMap (dark basemap)
-- UI: shadcn/ui (Radix), lucide-react icons
-- Panels: Home, Analysis, Navigation, Reports
-- Neutral / translucent backgrounds that keep the map visible
+- React 19 + TypeScript + Vite + Tailwind CSS 4
+- Map: Leaflet + OpenStreetMap (light basemap, readable outdoors)
+- Pages: home, map (list, reservoir sheet, route, advice), monthly bulletin (table, CSV, print)
+- Built around the v3 monthly bulletin: measured fill, 1-3 month forecast, risk of critical level
+- See `frontend/README.md`
 
 ---
 
@@ -89,7 +89,7 @@ npm install
 npm run dev                     # http://localhost:5173
 ```
 
-> The frontend calls the backend through `VITE_API_URL` (default `http://127.0.0.1:8000`).
+> In development the frontend calls `/api` and Vite proxies it to `http://127.0.0.1:8000`. In production, set `VITE_API_URL` at build time.
 
 ---
 
