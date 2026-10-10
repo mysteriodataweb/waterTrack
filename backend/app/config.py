@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Sécurité
     api_key: str = "change-me-in-production"
     cors_origins: str = ""
+    # Expression régulière d'origines autorisées, en plus de la liste : utile pour un hébergeur
+    # qui donne une adresse par déploiement (Vercel).
+    cors_origin_regex: str = ""
 
     # Services externes
     groq_api_key: str = ""

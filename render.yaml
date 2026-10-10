@@ -19,6 +19,9 @@ services:
       # Adresse du frontend Vercel (sans barre finale), plusieurs adresses séparées par des virgules.
       - key: CORS_ORIGINS
         sync: false
+      # Facultatif : expression régulière couvrant les adresses de déploiement Vercel.
+      - key: CORS_ORIGIN_REGEX
+        sync: false
       - key: API_KEY
         sync: false
       - key: GROQ_API_KEY
