@@ -1,386 +1,103 @@
-# Rapport Backend WaterTracker
+# WaterTracker Backend — Technical Report
 
-## Architecture
+*Updated October 2026. This report replaces an earlier version written for the v2 backend; most of the problems that version listed have since been fixed (see "Status of the earlier findings" below). It is the technical companion of the Independent Project report in `docs/independent-project/`.*
 
-Backend **FastAPI** (Python) avec **PostgreSQL/PostGIS** pour la base de données géospatiale. Un seul router (`/api`) avec 7 endpoints.
+## 1. Purpose
 
-## Ce qu'il fait concrètement
+The backend serves the WaterTracker application: an inventory of water points around Ouagadougou (Burkina Faso), the monthly water area of each reservoir measured by satellite, and forecasts of each reservoir's filling ratio one to three months ahead, with an early-warning status. It also provides routing to a water point and a historical summary report.
 
-### 1. Gestion des sources d'eau (`/api/water-sources`)
+## 2. Architecture
 
-- Stocke des points géographiques de sources d'eau dans Ouagadougou / Burkina Faso
-- Chaque source a : géométrie PostGIS, NDWI moyen (indice d'eau satellite), score de risque, statut (actif / à risque / tarí)
+| Layer | Technology | Location |
+|---|---|---|
+| API | FastAPI + Pydantic v2, single router under `/api` | `backend/app/main.py`, `app/router.py`, `app/routes/` |
+| Database | PostgreSQL + PostGIS (SQLAlchemy, pg8000), hosted on Neon | `app/database.py`, `app/models.py` |
+| Satellite collection | Google Earth Engine (Sentinel-2, Sentinel-1, CHIRPS, ERA5-Land) | `app/collectors/water_area.py`, `monthly.py` |
+| Scheduler | APScheduler, idempotent monthly update | `app/collectors/scheduler.py` |
+| Forecasting (v3) | scikit-learn bundle trained in the research notebook | `ml/features.py`, `ml/forecasting.py`, `notebooks/` |
+| Legacy forecasting (v2) | Prophet drying-up date, half-yearly NDWI | `app/services/prophet_service.py`, `ml/train.py` |
+| Text recommendations | Groq LLM, with a rule-based fallback | `app/services/llm.py`, `recommande.py` |
+| Routing | OpenRouteService, with Photon as reverse-geocoding fallback | `app/routes/navigation.py` |
+| Deployment | Render (API, `render.yaml`), Vercel (frontend) | repository root |
 
-### 2. Prédiction ML (`/api/predict` et `/api/update-all-scores`)
+The research notebook and the API share the same feature code (`ml/features.py`) and the same inference function (`ml/forecasting.py`), so the model evaluated in the notebook is exactly the one the API runs.
 
-- Modèle **Random Forest** entraîné sur des données historiques NDWI
-- Prédit un score de risque (0.0 → actif, 0.5 → à risque, 0.9 → tarí)
-- Fallback automatique par règles NDWI si le modèle ML est absent
+## 3. Data model
 
-### 3. Prédiction de tarissement (`/api/water-sources/{id}/prediction`)
+- **v3**: `Reservoir` (physical water body: origin `application` or `JRC`, analysis region, reference area, validation status), `ReservoirSource` (link between application water points and reservoirs), `WaterAreaObservation` (one row per reservoir and month: area, filling ratio, data source `S2` / `S1` / `interp` / `manquant`, volume, rainfall), `FillForecast` (forecast per reservoir, issue month and horizon, with 80 % interval and probability of a critical level).
+- **v2 (kept)**: `WaterSource` (the 65 application water points, PostGIS geometry, status) and `NdwiObservation` (half-yearly NDWI).
 
-- Utilise **Facebook Prophet** (séries temporelles) pour prédire l'évolution du NDWI sur 3 semestres
-- Estime la **date de tarissement** future d'une source
-- Calcule la vitesse de dégradation (rapide / lente / stable)
+The statuses `actif` / `à risque` / `tari` and the source label `manquant` are kept in French because the frontend and the database already use them.
 
-### 4. Recommandations IA (`app/services/gemini.py`)
+## 4. Endpoints
 
-- Mal nommé : utilise en réalité **Groq** (LLaMA 3.3 70B), pas Gemini
-- Génère des recommandations en français adaptées à 4 profils : ONG, gouvernement, agent terrain, communauté
-- Concrètement : "quand tarí, quoi faire" selon le rôle de l'utilisateur
+| Method | Path | Description | Auth |
+|---|---|---|---|
+| GET | `/api/health` | Database and external-service status | no |
+| GET | `/api/reservoirs` | Water bodies: origin, validation, latest filling, status | no |
+| GET | `/api/reservoirs/{id}/history` | Monthly series: area, filling, data source, volume, rainfall | no |
+| GET | `/api/reservoirs/{id}/forecast` | 1-3 month forecast, 80 % interval, probability of a critical level | no |
+| GET | `/api/water-sources/{id}/forecast` | Same forecast through an application water point | no |
+| GET | `/api/bulletin?month=&format=json\|csv` | Monthly bulletin ranked by risk | no |
+| PATCH | `/api/admin/reservoirs/{id}/validation` | Inventory validation (`valide`, `rejete`, `a_valider`) | API key |
+| POST | `/api/admin/monthly-update` | Collect one month, forecast, update statuses | API key |
+| POST | `/api/admin/recompute` | Recompute water-point statuses | API key |
+| GET | `/api/water-sources`, `/api/water-sources/{id}` | Paginated water points, details | no |
+| GET | `/api/water-sources/{id}/prediction` | v2 Prophet drying-up forecast + text recommendation | no |
+| POST | `/api/predict`, `/api/admin/collect` | v2 prediction and half-yearly collection | API key |
+| GET | `/api/report/summary` | Aggregated historical report | no |
+| POST / GET | `/api/navigation/route`, `/api/navigation/reverse` | Routing, reverse geocoding | no |
 
-### 5. Navigation (`/api/navigation/route` et `/api/navigation/reverse`)
+## 5. The v3 monthly pipeline
 
-- Itinéraires (voiture / pied / vélo) via **OpenRouteService**
-- Géocodage inverse (trouver l'adresse d'un point GPS)
+1. **Research run** (`notebooks/WaterTracker_pipeline.ipynb`, once a year after the rainy season): extraction since 2019, quality control, training, evaluation, bundle and model card in `ml/runs/forecast_latest/`.
+2. **Database load** (`python -m scripts.load_v3`): reservoirs, monthly areas, forecasts, statuses.
+3. **Monthly update** (scheduler or `POST /api/admin/monthly-update`): collects the latest month published by ERA5-Land and CHIRPS with the notebook's exact extraction parameters, issues forecasts and updates statuses. It is idempotent.
 
-## Scripts hors-API (data pipeline)
+Status rules: `tari` if the 1-month forecast filling is below 5 %; `à risque` if the probability of falling below 20 % of the reference area is at least 50 %; `actif` otherwise; `inconnu` for water points whose reservoir is not modelled.
 
-| Script | Rôle |
+## 6. Model performance (test period 2025 to August 2026)
+
+| Horizon | Random forest MAE | Climatology MAE | Skill | Significance | 80 % interval coverage |
+|---|---|---|---|---|---|
+| 1 month | 0.108 | 0.134 | +19.6 % | p < 0.001 | 83 % |
+| 2 months | 0.133 | 0.134 | +0.9 % | p = 0.41 | 80 % |
+| 3 months | 0.130 | 0.134 | +3.4 % | p = 0.11 | 75 % |
+
+The alert classifier reaches ROC-AUC 0.96-0.97 and detects 70-80 % of entries into a critical state with 83-90 % precision. Full results: Independent Project report, section 4.
+
+## 7. Quality, testing and security
+
+- **Tests**: 39 tests in `backend/tests/` (API, v2 fixes, feature leakage checks, S2/S1 fusion, v3 forecasts); integration tests are skipped automatically when the v3 data are missing. Run with `pytest -q` in `backend/`.
+- **Validation**: Pydantic schemas for requests and responses (`app/schemas.py`); paginated listings.
+- **Secrets**: `.env` is ignored by git; on Render, secrets are set in the service environment (`sync: false` in `render.yaml`).
+- **Write endpoints**: protected by `X-API-Key`, compared in constant time.
+- **CORS**: restricted to the origins listed in `CORS_ORIGINS`, optionally a pattern in `CORS_ORIGIN_REGEX`.
+- **TLS**: outgoing calls verify certificates through the system store (`truststore`).
+- **Reproducibility**: fixed seed, cached extractions, panel fingerprint and library versions in the model card, reload check of the saved bundle.
+
+## 8. Status of the earlier findings
+
+| Earlier finding (v2 report) | Status |
 |---|---|
-| `import_data.py` | Importe un GeoJSON dans PostgreSQL |
-| `train_model.py` / `train_model_v2.py` | Entraîne les modèles ML |
-| `predict_tarissement.py` | Batch prediction pour toutes les sources |
-| `recalculate_risk_scores.py` | Recalcule les scores par règles NDWI |
-| `diagnostic.py` | Analyse exploratoire des données |
-
-## Endpoints
-
-| Méthode | Chemin | Description |
-|---|---|---|
-| GET | `/api/water-sources` | Liste toutes les sources d'eau |
-| GET | `/api/water-sources/{id}` | Détail d'une source |
-| POST | `/api/predict` | Prédiction ML sur données arbitraires |
-| POST | `/api/update-all-scores` | Recalcul batch de tous les scores |
-| POST | `/api/navigation/route` | Itinéraire entre 2 points |
-| GET | `/api/navigation/reverse` | Géocodage inverse |
-| GET | `/api/water-sources/{id}/prediction` | Prédiction Prophet + recommandation IA |
-
-## En résumé
-
-C'est un **système d'alerte précoce de tarissement de sources d'eau** au Burkina Faso, basé sur des données satellite (NDWI). Il prédit quelles sources vont sécher, quand, et génère des recommandations actionnables pour différents acteurs (ONG, gouvernement, communautés).
-
----
-
-## Limites
-
-### 1. Sécurité
-
-- **Clés API exposées en dur dans le `.env`** : le fichier `.env` contient des clés API (Groq, OpenRouteService) et le mot de passe de la base de données. Ces clés ne doivent jamais être versionnées dans Git.
-- **CORS totalement ouvert** (`allow_origins=["*"]`) : n'importe quel site peut appeler l'API, ce qui est un risque en production.
-- **Pas d'authentification** : aucun endpoint n'est protégé. N'importe qui peut modifier les scores, lancer des prédictions, etc.
-- **Pas de validation des entrées** : le endpoint `/api/predict` accepte un `dict` brut sans aucune validation Pydantic.
-
-### 2. Architecture et code
-
-- **`schemas.py` est vide** : aucune validation Pydantic n'est utilisée pour les réponses ou les requêtes.
-- **Nom du fichier `gemini.py` trompeur** : le service utilise Groq, pas Gemini.
-- **Pas de `__init__.py` dans `routes/`** : peut poser des problèmes d'import dans certains contextes.
-- **Fichiers racine mélangés** : des scripts de training, diagnostics et utilitaires sont à la racine du backend, sans organisation claire.
-- **URLs avec chemins absolus Windows** : certains scripts contiennent des chemins comme `D:\\Dossiers\\...`, ce qui casse sur d'autres machines.
-- **Pas de gestion d'erreurs propre** : beaucoup de `try/except` avec fallback silencieux, ce qui rend le debugging difficile.
-
-### 3. Modèle ML et données
-
-- **Modèle entraîné sur peu de données** : le dataset historique semble limité (quelques centaines de lignes), ce qui affecte la fiabilité des prédictions.
-- **Pas de pipeline d'entraînement automatisé** : les modèles sont entraînés manuellement via des scripts, sans suivi de version ni reproductibilité garantie.
-- **Pas de métriques de performance en production** : aucun suivi de la qualité des prédictions une fois déployé.
-- **Probabilité de tarissement calculée de manière naïve** : `(1 - (ndwi + 0.5)) * 100` n'est pas une vraie probabilité statistique.
-- **Données manquantes comblées par des valeurs par défaut** : latitude/longitude par défaut (12.36, -1.52), NDVI à 0, saison "seche". Ces approximations biaisent les prédictions.
-
-### 4. Performance et scalabilité
-
-- **Pas de cache** : les données historiques CSV sont rechargées à chaque appel Prophet. Pas de Redis ni de cache en mémoire.
-- **Requêtes N+1** : `GET /water-sources` fait une requête SQL par source pour récupérer la géométrie (au lieu d'un seul `JOIN`).
-- **Pas de pagination** : les endpoints retournent toutes les données d'un coup.
-- **Prophet entraîné à chaque requête** : le modèle de série temporelle est réentraîné pour chaque appel de prédiction, ce qui est coûteux.
-
-### 5. Déploiement et maintenance
-
-- **Pas de tests unitaires** : aucun fichier de test pour l'API.
-- **Pas de Docker ni de configuration de déploiement**.
-- **Pas de documentation API** (au-delà de la doc Swagger automatique).
-- **Pas de logging structuré** : uniquement des `print()` dans le code.
-- **Pas de health check** : pas d'endpoint `/health` pour vérifier l'état du service.
-
----
-
-## Recommandations
-
-### Priorité haute
-
-1. **Sécuriser le `.env`** : ajouter `.env` au `.gitignore` et ne jamais commiter de clés API. Utiliser des variables d'environnement en production.
-2. **Ajouter l'authentification** : implémenter JWT ou une authentification par clé API pour protéger les endpoints sensibles (`/update-all-scores`, `/predict`).
-3. **Restreindre le CORS** : configurer `allow_origins` avec les domaines autorisés uniquement (ex: `["http://localhost:3000"]` en dev).
-4. **Valider les entrées** : créer des schémas Pydantic dans `schemas.py` pour toutes les requêtes et réponses API.
-
-### Priorité moyenne
-
-5. **Corriger les chemins absolus** : remplacer tous les `D:\\Dossiers\\...` par des chemins relatifs (`pathlib.Path` ou `os.path`).
-6. **Renommer `gemini.py`** en `groq.py` ou `llm.py` pour refléter le vrai service utilisé.
-7. **Optimiser les requêtes** : corriger le problème N+1 dans `GET /water-sources` avec un `JOIN` ou `ST_AsGeoJSON` dans la requête principale.
-8. **Mettre en cache les données Prophet** : charger l'historique une fois au démarrage ou utiliser un cache LRU, au lieu de relire le CSV à chaque requête.
-9. **Ajouter un endpoint `/health`** : retourner l'état de la base de données et des services externes.
-10. **Structurer le projet** : séparer les scripts ML dans un dossier `scripts/` ou `ml/`, distinct de l'API.
-
-### Priorité basse
-
-11. **Ajouter des tests** : créer des tests unitaires pour les services (prediction, Prophet, Groq) et des tests d'intégration pour les endpoints.
-12. **Dockeriser l'application** : créer un `Dockerfile` et un `docker-compose.yml` pour un déploiement reproductible.
-13. **Mettre en place du logging** : remplacer les `print()` par un vrai système de logging Python (`logging` module).
-14. **Ajouter de la pagination** : paginer les résultats de `GET /water-sources` pour gérer les gros volumes de données.
-15. **Versionner les modèles ML** : utiliser MLflow ou un système similaire pour tracer les versions de modèles, leurs métriques et leurs artefacts.
-
----
-
-## Évolution : Surveillance en temps réel
-
-### État actuel vs cible
-
-| Aspect | Actuel | Cible |
-|---|---|---|
-| Source de données | CSV statiques importés manuellement | Images satellites collectées automatiquement (Sentinel-2, Landsat) |
-| Fréquence de mise à jour | Semestrielle (manuel) | Hebdomadaire à quotidienne (automatique) |
-| Calcul NDWI | Fait à l'avance, stocké en CSV | Calculé en temps réel à l'arrivée de chaque nouvelle image |
-| Alertes | Aucune | Notification automatique (email, SMS, push) quand NDWI < seuil critique |
-| Prédictions | Ponctuelles (à la demande) | Planifiées automatiquement après chaque mise à jour de données |
-| Monitoring | Rien | Dashboard temps réel avec carte animée et état des sources |
-| Orchestration | Scripts lancés à la main | Pipeline automatisé avec retry, logs et alertes d'échec |
-
-### Architecture cible
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                     PIPELINE TEMPS RÉEL                          │
-│                                                                  │
-│  ┌─────────────┐    ┌──────────────────┐    ┌────────────────┐  │
-│  │  Sentinel-2  │───▶│  Collecteur      │───▶│  Calcul NDWI   │  │
-│  │  Landsat     │    │  (cron/airflow)  │    │  (par source)  │  │
-│  └─────────────┘    └──────────────────┘    └───────┬────────┘  │
-│                                                      │           │
-│                                                      ▼           │
-│  ┌─────────────┐    ┌──────────────────┐    ┌────────────────┐  │
-│  │  Dashboard   │◀──│  API WebSocket   │◀───│  Mise à jour   │  │
-│  │  temps réel  │    │  (FastAPI WS)    │    │  PostgreSQL    │  │
-│  └─────────────┘    └──────────────────┘    └───────┬────────┘  │
-│                                                      │           │
-│                                                      ▼           │
-│  ┌─────────────┐    ┌──────────────────┐    ┌────────────────┐  │
-│  │  Email/SMS   │◀──│  Moteur d'alerte │◀───│  Comparaison   │  │
-│  │  Push notif  │    │  (Celery task)   │    │  seuils        │  │
-│  └─────────────┘    └──────────────────┘    └────────────────┘  │
-│                                                                  │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │  MLflow : versionnage des modèles + métriques en prod      │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### Nouveaux composants détaillés
-
-#### 1. Collecteur de données satellite
-
-**Technologie** : Python + Google Earth Engine API (un fichier `ee_utils.py` existe déjà dans `data/`)
-
-**Rôle** :
-- Télécharger automatiquement les images Sentinel-2/Landsat sur la zone du Burkina Faso
-- Filtrer par date, couverture nuageuse (< 20%), zone géographique
-- Calculer le NDWI pour chaque source d'eau connue
-- Stocker les résultats dans PostgreSQL (nouvelle table `ndwi_observations`)
-
-**Fréquence** : Hebdomadaire (Sentinel-2 a une revisite de 5 jours)
-
-**Fichier à créer** : `services/collector.py`
-
-```python
-# Pseudo-code
-def collect_ndwi_weekly():
-    sources = db.query(WaterSource).all()
-    for source in sources:
-        image = get_latest_sentinel2_image(source.geometry, max_cloud=20)
-        ndwi = calculate_ndwi(image, source.geometry)
-        save_observation(source.id, ndwi, date=today)
-```
-
-#### 2. Table d'observations temps réel
-
-**Nouvelle table PostgreSQL** :
-
-```sql
-CREATE TABLE ndwi_observations (
-    id            SERIAL PRIMARY KEY,
-    source_id     INTEGER REFERENCES water_sources(id),
-    ndwi_value    FLOAT NOT NULL,
-    observation_date DATE NOT NULL,
-    satellite     VARCHAR(50),  -- 'sentinel-2', 'landsat-8'
-    cloud_cover   FLOAT,
-    created_at    TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX idx_ndwi_source_date
-ON ndwi_observations(source_id, observation_date DESC);
-```
-
-#### 3. Moteur d'alertes
-
-**Technologie** : Celery + Redis (task queue asynchrone)
-
-**Rôle** :
-- Après chaque insertion d'observation, comparer le NDWI au seuil critique
-- Si NDWI < 0.1 → alerte URGENTE
-- Si NDWI < 0.2 et en baisse → alerte PRÉVENTIVE
-- Envoyer les notifications selon les préférences de l'utilisateur
-
-**Fichier à créer** : `services/alerts.py`
-
-```python
-# Pseudo-code
-@celery_app.task
-def check_alerts(source_id, ndwi_value, previous_ndwi):
-    if ndwi_value < 0.1:
-        send_urgent_alert(source_id, "Tarissement imminent détecté")
-    elif ndwi_value < 0.2 and ndwi_value < previous_ndwi:
-        send_preventive_alert(source_id, "Baisse significative du NDWI")
-```
-
-**Canaux de notification** :
-
-| Canal | Technologie | Usage |
-|---|---|---|
-| Email | SendGrid / SMTP | Rapports périodiques, alertes non urgentes |
-| SMS | Twilio / Africa's Talking | Alertes URGENTES (agents terrain) |
-| Push | Firebase Cloud Messaging | Application mobile |
-| Webhook | HTTP POST | Intégration avec d'autres systèmes |
-
-#### 4. API temps réel (WebSocket)
-
-**Technologie** : FastAPI WebSocket (natif, pas de dépendance supplémentaire)
-
-**Rôle** :
-- Pousser les mises à jour en temps réel vers le frontend
-- Envoyer les nouvelles observations NDWI dès qu'elles sont calculées
-- Notifier les changements de statut d'une source
-
-**Fichier à créer** : `routes/websocket.py`
-
-```python
-# Pseudo-code
-from fastapi import WebSocket
-
-connected_clients: list[WebSocket] = []
-
-@router.websocket("/ws/live")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    connected_clients.append(websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-    except:
-        connected_clients.remove(websocket)
-
-async def broadcast_update(data: dict):
-    for client in connected_clients:
-        await client.send_json(data)
-```
-
-#### 5. Orchestration des tâches
-
-**Option A (simple)** : APScheduler intégré à FastAPI
-
-```python
-# Dans main.py
-from apscheduler.schedulers.background import BackgroundScheduler
-
-scheduler = BackgroundScheduler()
-scheduler.add_job(collect_ndwi_weekly, 'cron', day_of_week='mon', hour=6)
-scheduler.add_job(retrain_model_monthly, 'cron', day=1, hour=3)
-scheduler.start()
-```
-
-**Option B (production)** : Apache Airflow
-
-```
-dags/
-  watertracker_dag.py
-    ├── collect_satellite_data     (hebdo, lundi 6h)
-    ├── calculate_ndwi             (après collecte)
-    ├── check_alerts               (après calcul NDWI)
-    ├── retrain_model              (mensuel, 1er du mois 3h)
-    └── send_weekly_report         (hebdo, vendredi 8h)
-```
-
-#### 6. Dashboard temps réel
-
-**Technologie** : Frontend React/Next.js avec carte Leaflet/Mapbox
-
-**Fonctionnalités** :
-- Carte interactive des sources avec code couleur (vert/jaune/rouge)
-- Mise à jour automatique via WebSocket (pas de refresh manuel)
-- Graphique d'évolution NDWI par source (historique + prédiction)
-- Système de notifications dans l'interface
-- Filtres par zone, statut, niveau de risque
-
-### Planning d'implémentation
-
-| Phase | Durée | Contenu |
-|---|---|---|
-| **Phase 1** — Fondations | 2-3 semaines | Table `ndwi_observations`, collecteur Sentinel-2, tâche Celery basique |
-| **Phase 2** — Alertes | 1-2 semaines | Moteur d'alertes, envoi email/SMS, préférences utilisateur |
-| **Phase 3** — Temps réel | 2 semaines | WebSocket, broadcast des mises à jour, dashboard carte |
-| **Phase 4** — ML auto | 1-2 semaines | Réentraînement automatique des modèles, MLflow |
-| **Phase 5** — Production | 1-2 semaines | Docker, Airflow, monitoring (Prometheus/Grafana), tests |
-
-**Durée totale estimée** : 7 à 11 semaines
-
-### Dépendances Python supplémentaires
-
-```
-# Ajouter à requirements.txt
-celery[redis]        # Task queue asynchrone
-redis                # Backend Celery
-earthengine-api      # Google Earth Engine (collecte satellite)
-sendgrid             # Envoi d'emails
-twilio               # Envoi de SMS (optionnel)
-mlflow               # Versionnage de modèles
-apscheduler          # Planification de tâches (option simple)
-websockets           # WebSocket (déjà inclus dans FastAPI)
-prometheus-client    # Métriques (optionnel)
-```
-
-### Fichiers à créer
-
-```
-watertracker-backend/
-├── services/
-│   ├── collector.py          # Collecte satellite + calcul NDWI
-│   ├── alerts.py             # Moteur d'alertes
-│   ├── groq.py               # Renommé depuis gemini.py
-│   └── scheduler.py          # Configuration des tâches planifiées
-├── routes/
-│   ├── water.py              # Existant
-│   └── websocket.py          # Nouveau : endpoints WebSocket
-├── ml/
-│   ├── train.py              # Depuis train_model.py
-│   ├── train_v2.py           # Depuis train_model_v2.py
-│   └── evaluate.py           # Nouveau : évaluation en prod
-├── scripts/
-│   ├── import_data.py        # Depuis racine
-│   ├── recalculate_scores.py # Depuis racine
-│   └── diagnostic.py         # Depuis racine
-├── docker/
-│   ├── Dockerfile
-│   └── docker-compose.yml    # API + Redis + PostgreSQL + Celery worker
-└── tests/
-    ├── test_api.py
-    ├── test_prediction.py
-    └── test_alerts.py
-```
-
-### Considérations techniques
-
-- **Google Earth Engine** nécessite un compte GEE (gratuit pour usage non commercial) et une authentification par clé de service
-- **Sentinel-2** : données免费 via GEE ou Copernicus Open Access Hub
-- **Latence** : le calcul NDWI satellite a un délai de 1-3 jours après la prise de l'image (pas vraiment "temps réel" mais quasi-continu)
-- **Coût** : SendGrid/Twilio ont des tiers gratuits, GEE est gratuit, Redis peut tourner en local ou sur un VPS minimal
-- **Scalabilité** : l'architecture Celery permet d'ajouter des workers si le volume de sources augmente
+| API keys in a committed `.env` | Fixed: `.env` ignored, secrets in the host environment |
+| CORS open to all origins | Fixed: configurable allow-list |
+| No authentication | Fixed for write endpoints (API key) |
+| Empty `schemas.py`, no input validation | Fixed: Pydantic schemas |
+| `gemini.py` misnamed | Fixed: `app/services/llm.py` |
+| Scripts at the root, absolute Windows paths | Fixed: `scripts/`, `ml/`, relative paths |
+| No tests, no health check, no pagination | Fixed |
+| N+1 queries on `/water-sources` | Fixed |
+| Naive drying-up probability, default coordinates, model trained on a few hundred rows | Superseded by v3 (monthly satellite series, honest evaluation); the v2 audit is in the notebook, section 6 |
+| Inference bug (scaling applied to an unscaled model) | Found by the audit and fixed in `app/services/ml.py` |
+| No automatic collection | Fixed: Earth Engine collector and scheduler |
+
+## 9. Remaining limitations and recommendations
+
+1. **Default API key opens the write endpoints.** If `API_KEY` is not set, `app/deps.py` accepts every call (development mode, with a warning). Recommendation: refuse to start in production without a strong key.
+2. **Public endpoints that spend paid or rate-limited quotas.** `/navigation/*` (OpenRouteService) and `/water-sources/{id}/prediction` (Groq LLM) have no rate limiting. Recommendation: add rate limiting or cache the responses.
+3. **Text recommendations still built on v2 outputs.** The LLM advice uses the Prophet drying-up date and the point NDWI, which the audit showed to be unreliable. Recommendation: replace them with short rule-based messages derived from the v3 forecast.
+4. **Monthly update needs the model bundle and an Earth Engine service account on the server.** The bundle is excluded from git; it must be provided to the service, and the scheduler stays disabled (`SCHEDULER_ENABLED=false` in `render.yaml`) until then.
+5. **Google Earth Engine licensing.** Earth Engine is free for research and non-commercial use; a paid service would need a commercial licence.
+6. **Missing alert baseline.** A calendar-only alert rule should be evaluated before claiming that the classifier adds value beyond the season.
+7. **Retire v2.** Once the frontend relies only on v3, the Prophet and half-yearly NDWI code can be removed to reduce maintenance.

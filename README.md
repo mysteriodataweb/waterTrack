@@ -44,6 +44,10 @@ frontend/    React + TypeScript frontend (Vite, shadcn/ui, Leaflet)
 (Sentinel-2 at 10 m + Sentinel-1, CHIRPS, ERA5-Land) to the filling-ratio forecasting model
 (temporal validation, calibrated intervals, model card). See `backend/README.md`.
 
+### Independent Project — `docs/independent-project/`
+Report (Word and PDF) written to the TamTam Digital School guidelines, with its sources, English
+figures, build scripts and defense preparation. The technical report of the backend is `reportbackend.md`.
+
 ### Frontend — `frontend/`
 - React 19 + TypeScript + Vite + Tailwind CSS 4
 - Map: Leaflet + OpenStreetMap (light basemap, readable outdoors)
