@@ -31,6 +31,7 @@ backend/
 ├── ml/
 │   ├── features.py             # v3: model features (shared by notebook and API)
 │   ├── forecasting.py          # v3: inference (shared by notebook and API)
+│   ├── drying.py               # dry-season drying month (survival model, baselines, bulletin)
 │   ├── train.py, evaluate.py   # v2 (legacy)
 │   └── runs/                   # forecast_latest/bundle.joblib (v3), latest/ (v2)
 ├── notebooks/                  # WaterTracker_pipeline.ipynb: GEE -> v3 model (research paper)
@@ -118,6 +119,17 @@ cd notebooks && jupyter lab        # kernel "Python (WaterTracker)"
 Outputs: `data/gee/` (Parquet cache, panel, inventory), `reports/figures/`,
 `ml/runs/forecast_<date>/` and `ml/runs/forecast_latest/` (`bundle.joblib`, `model_card.json`).
 The full 10 m extraction takes about 1 hour (parallel requests); later runs reuse the cache.
+
+### Drying month (dry season)
+
+`notebooks/WaterTracker_drying_date.ipynb` answers "in which month will this reservoir
+fall below its critical level, and will it last until the end of June?" for forecasts
+issued from October to March. It reads `data/gee/panel_monthly.parquet` only (no Earth
+Engine access needed) and uses `ml/drying.py`: a discrete-time survival model (logistic
+and gradient-boosting hazards) compared with the reservoir's usual drying month, a
+projection, a linear trend and a Kaplan-Meier reference, with a temporal split by season
+(test: 2024-25 and 2025-26). `ml.drying.forecast_drying(model, panel, "YYYY-10", ref_seasons)`
+returns the bulletin table: most likely month, 80 % range, probability of lasting until June.
 
 ## Deployment (Render + Neon)
 
