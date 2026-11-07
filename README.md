@@ -46,7 +46,7 @@ frontend/    React + TypeScript frontend (Vite, shadcn/ui, Leaflet)
 
 ### Independent Project — `docs/independent-project/`
 Report (Word and PDF) written to the TamTam Digital School guidelines, with its sources, English
-figures, build scripts and defense preparation. The technical report of the backend is `reportbackend.md`.
+figures, build scripts and defense preparation. The technical report of the backend is `docs/independent-project/technical_report_backend.md`.
 
 ### Frontend — `frontend/`
 - React 19 + TypeScript + Vite + Tailwind CSS 4

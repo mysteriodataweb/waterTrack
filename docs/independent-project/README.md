@@ -13,7 +13,7 @@ Ce dossier rassemble les livrables du projet indépendant de TamTam Digital Scho
 | `figures/` | Figures en anglais, retracées à partir des résultats du notebook |
 | `scripts/` | Génération des figures, du rapport Word, de la table des matières et du PDF |
 | `../../backend/notebooks/WaterTracker_pipeline.ipynb` | Le notebook de recherche, traduit en anglais, d'où viennent tous les chiffres |
-| `../../reportbackend.md` | Rapport technique du backend, mis à jour (annexe possible) |
+| `technical_report_backend.md` | Rapport technique du backend, mis à jour (annexe possible) |
 
 Support de soutenance (14 diapositives avec notes de l'orateur) : https://claude.ai/artifact/Kjd4UZgkF4RvGnGbXDDDt5. Il se télécharge en PowerPoint ou en PDF.
 

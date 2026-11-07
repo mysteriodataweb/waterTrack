@@ -1,6 +1,6 @@
 # WaterTracker Backend — Technical Report
 
-*Updated October 2026. This report replaces an earlier version written for the v2 backend; most of the problems that version listed have since been fixed (see "Status of the earlier findings" below). It is the technical companion of the Independent Project report in `docs/independent-project/`.*
+*Updated October 2026. This report replaces an earlier version written for the v2 backend; most of the problems that version listed have since been fixed (see "Status of the earlier findings" below). It is the technical companion of the Independent Project report in this folder.*
 
 ## 1. Purpose
 
