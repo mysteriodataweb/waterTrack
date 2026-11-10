@@ -1,6 +1,6 @@
 # 💧 WaterTracker Africa — Satellite monitoring of water resources
 
-> Monitoring of small reservoirs in West Africa (Burkina Faso) from **real satellite data (Google Earth Engine)**: monthly water surface at **10 m**, **machine-learning forecasts** of reservoir filling 1-3 months ahead, and **AI-generated recommendations**.
+> Monitoring of small reservoirs in West Africa (Burkina Faso) from **real satellite data (Google Earth Engine)**: monthly water surface at **10 m**, **machine-learning forecasts** of reservoir filling 1-3 months ahead, **early warning** of critical levels and a **drying-month forecast** for the dry season.
 
 ![Stack](https://img.shields.io/badge/Front-React%20%2B%20TypeScript-61dafb) ![Stack](https://img.shields.io/badge/Back-FastAPI%20%2B%20Python-009688) ![Stack](https://img.shields.io/badge/DB-PostgreSQL%20%2B%20PostGIS-336791) ![Stack](https://img.shields.io/badge/ML-RandomForest%20%2B%20Prophet-ff69b4)
 
@@ -10,13 +10,60 @@
 
 WaterTracker monitors a network of **water points** (dams, reservoirs, ponds) around Ouagadougou. The pipeline ingests satellite imagery, measures the water surface of each reservoir every month, forecasts its filling, and exposes everything through an API and an interactive map.
 
+### Why it exists
+Small reservoirs carry the dry season around Ouagadougou: livestock watering, market gardening and, in places, domestic water. Apart from the large dams that supply the city, none of them is gauged, so managers usually learn that a reservoir has dried up after the fact. WaterTracker uses free satellite archives to measure every reservoir every month and to anticipate the dry-season drawdown.
+
 ### What the system does
-- 🛰️ **Satellite collection** — Google Earth Engine: monthly water surface of each reservoir at 10 m (Sentinel-2 + Sentinel-1), updated automatically.
-- 🤖 **Machine learning** — forecast of the reservoir filling ratio 1-3 months ahead (RandomForest), with a prediction interval and the probability of reaching a critical level; monthly bulletin.
-- 📉 **Drying-up forecast (v2)** — Prophet: trend curve and estimated drying date.
-- 🧠 **AI recommendations** — generated per water point by an LLM (Groq / Qwen).
-- 🗺️ **Interactive map** — navigation, filters by zone/status, popups, numbering by zone.
-- 📊 **Historical report** — NDWI trend, KPIs, top at-risk sources, CSV export.
+
+**1. Reservoir inventory (GIS)**
+- The application's 65 water points are linked to their physical water body: 44 reservoirs, since several points can share one dam.
+- The inventory was checked against the JRC Global Surface Water map: it covered 76 % of the water area but only 38 % of the water bodies of 10 ha or more. The 56 missing ones were added, giving 100 water bodies analysed, 96 of them modelled.
+- Each added water body starts as "to validate"; a manager can confirm or reject it through the API.
+
+**2. Monthly satellite measurement at 10 m**
+- Water area of each reservoir every month since January 2019, from Sentinel-2 (MNDWI with the SWIR band sharpened to 10 m).
+- Clouds are masked pixel by pixel with Cloud Score+, so 98.7 % of reservoir-months are observed directly; Sentinel-1 radar fills the cloudy months.
+- Every value keeps its source (optical, radar, interpolated) for traceability.
+- An indicative volume is estimated with a regional area-volume relationship (valid for reservoirs of 1 to 35 ha).
+- Rainfall (CHIRPS) and evaporation, temperature and soil moisture (ERA5-Land) are attached to each reservoir's sub-basin.
+
+**3. Filling forecast, 1 to 3 months ahead**
+- A random forest forecasts each reservoir's filling ratio (water area divided by its reference area), with a calibrated 80 % interval.
+- On the test years (2025-2026) it is 19.6 % more accurate than the reservoir's seasonal normal one month ahead; at two and three months it only matches the seasonal normal, and even perfect rainfall knowledge would not change that.
+
+**4. Early warning of a critical level**
+- Probability that a reservoir falls below 20 % of its reference area, translated into statuses on the map: active, at risk, dried up.
+- On the test years, it flags 70-80 % of the reservoirs that will enter a critical state, and 83-90 % of its alerts are confirmed.
+
+**5. Drying month (dry season)** — *new, not yet in the API*
+- For forecasts issued from October to March: the most likely month in which each reservoir will fall below its critical level, an 80 % range, and the probability that it lasts until the rains return at the end of June.
+- A reservoir's usual drying month is already right within one month in 94 % of cases; the survival model refines it, mostly for forecasts issued from November to January and in unusual years (`backend/ml/drying.py`).
+
+**6. Monthly bulletin, map and reservoir sheets**
+- Bulletin of all reservoirs ranked by risk (JSON, CSV, print).
+- Interactive map with filters by zone and status, a sheet per reservoir (measured filling, history, forecast, range), and a route to the water point (OpenRouteService).
+
+**7. Automatic monthly update** — *in the code, disabled in deployment*
+- An idempotent job finds the latest month published by ERA5-Land and CHIRPS, measures every reservoir in Google Earth Engine, issues the forecasts and updates the statuses. It runs from a scheduler or from `POST /api/admin/monthly-update`.
+- To run in production it needs the trained model bundle and an Earth Engine service account on the server, and an external trigger (the free hosting plan sleeps). Models are retrained manually, once a year after the rainy season.
+
+**8. Legacy features (v2)**
+- Prophet drying-up curve, text advice generated by an LLM (Groq / Qwen) and a historical NDWI report. The audit of the v2 model showed that its outputs are not reliable; the advice is to be rebuilt on the v3 forecasts.
+
+**9. Research and documentation**
+- Reproducible notebooks in English: the full pipeline from Earth Engine to the forecasting model, and the drying-month analysis.
+- Honest evaluation (temporal validation, strong baselines, significance tests), model card, unit tests, and an Independent Project report (`docs/independent-project/`).
+
+### AI components: status
+
+| Component | What it does | Status |
+|---|---|---|
+| Filling forecast (random forest) | Filling ratio 1-3 months ahead, 80 % interval | Done, served by the API |
+| Early warning (gradient-boosting classifier) | Probability of a critical level, map statuses | Done, served by the API |
+| Drying month (survival model) | Most likely critical month, range, probability of lasting until June | Done (model, tests, notebook); not yet in the API |
+| Water detection pixel by pixel (U-Net) | Better measurement of ponds under 5 ha and of water under vegetation | Not started: needs Sentinel-2 images and labelled examples |
+| Automatic inventory | Detect every reservoir each year, to scale to a region or a country | Not started: builds on the water-detection model |
+| Abnormal withdrawals | Compare the observed drawdown with the drawdown expected from evaporation, flag reservoirs that empty much faster | Not started: can begin with the existing monthly panel; needs field checks |
 
 ---
 
@@ -39,10 +86,14 @@ frontend/    React + TypeScript frontend (Vite, shadcn/ui, Leaflet)
 | Navigation | OpenRouteService (`app/routes/navigation.py`) |
 | Scheduler | APScheduler (`app/collectors/scheduler.py`) |
 
-### Research notebook — `backend/notebooks/`
-`WaterTracker_pipeline.ipynb`: complete, reproducible pipeline from Google Earth Engine extraction
-(Sentinel-2 at 10 m + Sentinel-1, CHIRPS, ERA5-Land) to the filling-ratio forecasting model
-(temporal validation, calibrated intervals, model card). See `backend/README.md`.
+### Research notebooks — `backend/notebooks/`
+- `WaterTracker_pipeline.ipynb`: complete, reproducible pipeline from Google Earth Engine extraction
+  (Sentinel-2 at 10 m + Sentinel-1, CHIRPS, ERA5-Land) to the filling-ratio forecasting model
+  (temporal validation, calibrated intervals, model card).
+- `WaterTracker_drying_date.ipynb`: drying-month model for the dry season, built on the monthly panel
+  (`backend/data/gee/panel_monthly.parquet`), no Earth Engine access needed.
+
+See `backend/README.md`.
 
 ### Independent Project — `docs/independent-project/`
 Report (Word and PDF) written to the TamTam Digital School guidelines, with its sources, English
@@ -63,11 +114,12 @@ figures, build scripts and defense preparation. The technical report of the back
 |---------|----------|-------------|
 | `GET` | `/api/water-sources` | Paginated water points (zone labels, risk score, NDWI) |
 | `GET` | `/api/water-sources/{id}/prediction` | Drying-up forecast + recommendations (v2) |
-| `GET` | `/api/water-sources/{id}/forecast` | v3 filling-ratio forecast 1-3 months ahead (interval, probability of critical level) |
+| `GET` | `/api/water-sources/{id}/forecast`, `/api/reservoirs/{id}/forecast` | v3 filling-ratio forecast 1-3 months ahead (interval, probability of critical level) |
 | `GET` | `/api/bulletin` | v3 monthly bulletin: all reservoirs ranked by risk (JSON or CSV) |
 | `GET` | `/api/reservoirs`, `/api/reservoirs/{id}/history` | v3 reservoirs and their monthly water-surface series (10 m) |
 | `GET` | `/api/report/summary` | Aggregated historical report (NDWI trend, zones, top risk) |
 | `GET` | `/api/health` | Service health |
+| `POST` | `/api/admin/monthly-update` | Collect the latest month, forecast, update statuses (API key) |
 | `POST` | `/api/admin/recompute` | Recompute risk scores (API key) |
 
 > Configuration (GEE/Groq/ORS keys, database URL) goes in `.env` — see `backend/.env.example`.
@@ -113,9 +165,17 @@ pytest -q          # API, predictions, fixes, feature leakage checks, v3 forecas
 ---
 
 ## Roadmap
-- [ ] Cloud deployment (backend + managed Postgres)
+- [x] Cloud deployment configuration (Render API, Neon PostgreSQL/PostGIS, Vercel frontend)
+- [x] Drying-month model for the dry season (`backend/ml/drying.py`)
+- [ ] Serve the drying month in the API and the monthly bulletin
+- [ ] Reliable monthly collection: external trigger, catch-up of missed months, failure alerts
+- [ ] Annual retraining with a promotion check, and monthly verification of past forecasts
+- [ ] Replace the legacy LLM advice with messages built on the v3 forecasts
+- [ ] Abnormal-withdrawal detection
+- [ ] Water detection with a U-Net, then automatic inventory of all reservoirs
+- [ ] Field validation with a partner (staff gauges, photos)
 - [ ] Authentication / user roles
-- [ ] Automated alerts (email / mobile) on critical thresholds
+- [ ] Automated alerts (email / SMS) on critical thresholds
 - [ ] Extension to other West African basins
 
 ---
