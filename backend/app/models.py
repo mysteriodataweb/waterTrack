@@ -147,3 +147,26 @@ class FillForecast(Base):
     status        = Column(String, nullable=False)
     model_version = Column(String, nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow)
+
+
+class DryingForecast(Base):
+    """Mois prévu de passage sous le niveau critique, émis d'octobre à mars (ml/drying.py).
+
+    Une ligne par retenue encore au-dessus du niveau critique au mois d'émission.
+    Un mois vide (NULL) signifie « après juin » : la retenue tient jusqu'au retour des pluies.
+    """
+
+    __tablename__ = "drying_forecasts"
+    __table_args__ = (UniqueConstraint("reservoir_id", "issue_month", name="uq_drying_forecast"),)
+
+    id              = Column(Integer, primary_key=True)
+    reservoir_id    = Column(String, ForeignKey("reservoirs.id", ondelete="CASCADE"), nullable=False, index=True)
+    issue_month     = Column(Date, nullable=False, index=True)
+    fill_now        = Column(Float, nullable=False)
+    critical_month  = Column(Date, nullable=True)                     # mois le plus probable
+    earliest_80     = Column(Date, nullable=True)                     # borne basse de l'intervalle à 80 %
+    latest_80       = Column(Date, nullable=True)                     # borne haute
+    p_lasts_to_june = Column(Float, nullable=False)                   # probabilité de tenir jusqu'à fin juin
+    usual_month     = Column(Date, nullable=True)                     # mois habituel de la retenue
+    model_version   = Column(String, nullable=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)

@@ -35,7 +35,7 @@ Small reservoirs carry the dry season around Ouagadougou: livestock watering, ma
 - Probability that a reservoir falls below 20 % of its reference area, translated into statuses on the map: active, at risk, dried up.
 - On the test years, it flags 70-80 % of the reservoirs that will enter a critical state, and 83-90 % of its alerts are confirmed.
 
-**5. Drying month (dry season)** — *new, not yet in the API*
+**5. Drying month (dry season)** — *in the API and the bulletin from October to March*
 - For forecasts issued from October to March: the most likely month in which each reservoir will fall below its critical level, an 80 % range, and the probability that it lasts until the rains return at the end of June.
 - A reservoir's usual drying month is already right within one month in 94 % of cases; the survival model refines it, mostly for forecasts issued from November to January and in unusual years (`backend/ml/drying.py`).
 
@@ -60,10 +60,10 @@ Small reservoirs carry the dry season around Ouagadougou: livestock watering, ma
 |---|---|---|
 | Filling forecast (random forest) | Filling ratio 1-3 months ahead, 80 % interval | Done, served by the API |
 | Early warning (gradient-boosting classifier) | Probability of a critical level, map statuses | Done, served by the API |
-| Drying month (survival model) | Most likely critical month, range, probability of lasting until June | Done (model, tests, notebook); not yet in the API |
+| Drying month (survival model) | Most likely critical month, range, probability of lasting until June | Done, served by the API and the bulletin (backend); not yet shown in the frontend |
 | Water detection pixel by pixel (U-Net) | Better measurement of ponds under 5 ha and of water under vegetation | Not started: needs Sentinel-2 images and labelled examples |
 | Automatic inventory | Detect every reservoir each year, to scale to a region or a country | Not started: builds on the water-detection model |
-| Abnormal withdrawals | Compare the observed drawdown with the drawdown expected from evaporation, flag reservoirs that empty much faster | Not started: can begin with the existing monthly panel; needs field checks |
+| Abnormal withdrawals | Compare the observed drawdown with the drawdown expected from comparable reservoirs, flag reservoirs that empty much faster | Analysis done (model, tests, notebook); low sensitivity, needs field checks; not in the API |
 
 ---
 
@@ -92,6 +92,8 @@ frontend/    React + TypeScript frontend (Vite, shadcn/ui, Leaflet)
   (temporal validation, calibrated intervals, model card).
 - `WaterTracker_drying_date.ipynb`: drying-month model for the dry season, built on the monthly panel
   (`backend/data/gee/panel_monthly.parquet`), no Earth Engine access needed.
+- `WaterTracker_withdrawals.ipynb`: reservoirs that lose water faster than expected in the dry season,
+  on the same panel, validated by injecting simulated withdrawals.
 
 See `backend/README.md`.
 
@@ -115,7 +117,8 @@ figures, build scripts and defense preparation. The technical report of the back
 | `GET` | `/api/water-sources` | Paginated water points (zone labels, risk score, NDWI) |
 | `GET` | `/api/water-sources/{id}/prediction` | Drying-up forecast + recommendations (v2) |
 | `GET` | `/api/water-sources/{id}/forecast`, `/api/reservoirs/{id}/forecast` | v3 filling-ratio forecast 1-3 months ahead (interval, probability of critical level) |
-| `GET` | `/api/bulletin` | v3 monthly bulletin: all reservoirs ranked by risk (JSON or CSV) |
+| `GET` | `/api/reservoirs/{id}/drying` | v3 dry season (October to March): month of the critical level, 80 % range, probability of lasting until June |
+| `GET` | `/api/bulletin` | v3 monthly bulletin: all reservoirs ranked by risk, with the drying month in the dry season (JSON or CSV) |
 | `GET` | `/api/reservoirs`, `/api/reservoirs/{id}/history` | v3 reservoirs and their monthly water-surface series (10 m) |
 | `GET` | `/api/report/summary` | Aggregated historical report (NDWI trend, zones, top risk) |
 | `GET` | `/api/health` | Service health |
@@ -167,11 +170,13 @@ pytest -q          # API, predictions, fixes, feature leakage checks, v3 forecas
 ## Roadmap
 - [x] Cloud deployment configuration (Render API, Neon PostgreSQL/PostGIS, Vercel frontend)
 - [x] Drying-month model for the dry season (`backend/ml/drying.py`)
-- [ ] Serve the drying month in the API and the monthly bulletin
+- [x] Serve the drying month in the API and the monthly bulletin
+- [ ] Show the drying month in the frontend (reservoir sheet and bulletin table)
 - [ ] Reliable monthly collection: external trigger, catch-up of missed months, failure alerts
 - [ ] Annual retraining with a promotion check, and monthly verification of past forecasts
 - [ ] Replace the legacy LLM advice with messages built on the v3 forecasts
-- [ ] Abnormal-withdrawal detection
+- [x] Abnormal-withdrawal analysis (`backend/ml/withdrawals.py`): a short list of reservoirs to check
+- [ ] Field checks of the flagged reservoirs, then serve the list in the API
 - [ ] Water detection with a U-Net, then automatic inventory of all reservoirs
 - [ ] Field validation with a partner (staff gauges, photos)
 - [ ] Authentication / user roles

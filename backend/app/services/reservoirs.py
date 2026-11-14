@@ -8,17 +8,18 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import FillForecast, Reservoir, ReservoirSource, WaterAreaObservation, WaterSource
+from ..models import DryingForecast, FillForecast, Reservoir, ReservoirSource, WaterAreaObservation, WaterSource
 
 logger = logging.getLogger(__name__)
 
 PANEL_COLUMNS = ["area_ha", "fill", "area_source", "valid_frac", "volume_m3",
                  "precip_mm", "pet_mm", "aet_mm", "t2m_c", "soil_moist"]
+DRYING_MONTHS = ["critical_month", "earliest_80", "latest_80", "usual_month"]
 
 
 def _none(value):
@@ -145,6 +146,79 @@ def apply_forecasts_to_sources(db: Session, issue_month: Optional[date] = None) 
 
 
 # --------------------------------------------------------------------------- #
+# Mois d'assèchement (saison sèche)
+# --------------------------------------------------------------------------- #
+def _drying_month(value) -> Optional[date]:
+    """'2027-02' -> 1er février 2027 ; « after June » (la retenue tient) -> None."""
+    try:
+        return pd.Period(str(value), "M").to_timestamp().date()
+    except ValueError:
+        return None
+
+
+def _month_label(value) -> Optional[str]:
+    return None if value is None or pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m")
+
+
+def drying_panel(db: Session) -> pd.DataFrame:
+    """Panel mensuel avec la surface de référence, attendu par `ml/drying.py`."""
+    panel = load_panel(db)
+    a_ref = dict(db.execute(select(Reservoir.id, Reservoir.a_ref_ha)).all())
+    return panel.assign(a_ref_ha=panel["reservoir_id"].map(a_ref).astype(float))
+
+
+def replace_drying_forecasts(db: Session, bulletin: pd.DataFrame, issue_month: date, model_version: str) -> int:
+    """Remplace les prévisions d'assèchement d'un mois d'émission.
+
+    Suppression puis insertion : une retenue passée sous le niveau critique
+    entre deux exécutions ne doit pas garder son ancienne prévision.
+    """
+    db.execute(delete(DryingForecast).where(DryingForecast.issue_month == issue_month))
+    rows = [
+        {"reservoir_id": r.reservoir_id, "issue_month": issue_month, "fill_now": float(r.fill_now),
+         "p_lasts_to_june": float(r.p_lasts_to_june), "model_version": model_version,
+         **{c: _drying_month(getattr(r, c)) for c in DRYING_MONTHS}}
+        for r in bulletin.itertuples(index=False)
+    ]
+    if rows:
+        db.execute(insert(DryingForecast).values(rows))
+    return len(rows)
+
+
+def publish_drying(db: Session, issue_month) -> dict:
+    """Calcule et enregistre le mois d'assèchement prévu pour le mois d'émission (octobre à mars).
+
+    Hors saison sèche, ou si l'historique est trop court, rien n'est écrit et la
+    raison est renvoyée dans `drying_note` (la prévision de remplissage n'est pas bloquée).
+    """
+    from ml import drying
+
+    issue = pd.Timestamp(issue_month).to_period("M").to_timestamp()
+    if issue.month not in drying.ISSUE_MONTHS:
+        return {"drying_forecasts": 0, "drying_note": "hors saison sèche (émission d'octobre à mars)"}
+    try:
+        bulletin = drying.issue_bulletin(drying_panel(db), issue, threshold=settings.critical_fill)
+    except ValueError as exc:
+        logger.warning("Mois d'assèchement non calculé pour %s : %s", issue.strftime("%Y-%m"), exc)
+        return {"drying_forecasts": 0, "drying_note": str(exc)}
+    return {"drying_forecasts": replace_drying_forecasts(db, bulletin, issue.date(), drying.MODEL_VERSION)}
+
+
+def drying_payload(row: DryingForecast) -> dict:
+    """Prévision d'assèchement d'une retenue, telle qu'exposée par l'API et le bulletin."""
+    return {
+        **{c: _month_label(getattr(row, c)) for c in DRYING_MONTHS},
+        "lasts_to_june": row.critical_month is None,
+        "p_lasts_to_june": round(float(row.p_lasts_to_june), 4),
+    }
+
+
+def drying_forecasts(db: Session, issue_month: date) -> dict[str, DryingForecast]:
+    rows = db.execute(select(DryingForecast).where(DryingForecast.issue_month == issue_month)).scalars().all()
+    return {r.reservoir_id: r for r in rows}
+
+
+# --------------------------------------------------------------------------- #
 # Bulletin mensuel
 # --------------------------------------------------------------------------- #
 def build_bulletin(db: Session, issue_month: Optional[date] = None, include_rejected: bool = False) -> dict:
@@ -173,6 +247,7 @@ def build_bulletin(db: Session, issue_month: Optional[date] = None, include_reje
                            columns=["reservoir_id", "source_id"]).groupby("reservoir_id")["source_id"].apply(list)
 
     wide = fc.pivot(index="reservoir_id", columns="horizon", values=["fill_pred", "fill_lo80", "fill_hi80", "p_critical"])
+    drying = drying_forecasts(db, issue)
     rows = []
     for rid, r in res.iterrows():
         if rid not in wide.index:
@@ -202,6 +277,8 @@ def build_bulletin(db: Session, issue_month: Optional[date] = None, include_reje
                  "p_critical": round(float(wide.loc[rid, ("p_critical", h)]), 4)}
                 for h in horizons
             ],
+            # Saison sèche seulement ; None si la retenue est déjà sous le niveau critique
+            "drying": drying_payload(drying[rid]) if rid in drying else None,
         })
     rows.sort(key=lambda x: (-x["p_critical_max"], x["fill_now"] if x["fill_now"] is not None else 9))
     statuses = pd.Series([r["status"] for r in rows]).value_counts().to_dict()
@@ -211,6 +288,7 @@ def build_bulletin(db: Session, issue_month: Optional[date] = None, include_reje
         "critical_fill": settings.critical_fill,
         "model_version": fc["model_version"].iloc[0],
         "n_reservoirs": len(rows),
+        "drying_issued": bool(drying),      # vrai d'octobre à mars, quand le mois d'assèchement est prévu
         "status_counts": {k: int(v) for k, v in statuses.items()},
         "reservoirs": rows,
     }
@@ -219,11 +297,13 @@ def build_bulletin(db: Session, issue_month: Optional[date] = None, include_reje
 def bulletin_to_csv(bulletin: dict) -> str:
     flat = []
     for r in bulletin["reservoirs"]:
-        row = {k: v for k, v in r.items() if k not in ("forecast", "source_ids")}
+        row = {k: v for k, v in r.items() if k not in ("forecast", "source_ids", "drying")}
         row["source_ids"] = " ".join(map(str, r["source_ids"]))
         for f in r["forecast"]:
             for k in ("fill_pred", "fill_lo80", "fill_hi80", "p_critical"):
                 row[f"{k}_h{f['horizon']}"] = f[k]
+        for k, v in (r.get("drying") or {}).items():
+            row[f"drying_{k}"] = v
         flat.append(row)
     return pd.DataFrame(flat).to_csv(index=False)
 

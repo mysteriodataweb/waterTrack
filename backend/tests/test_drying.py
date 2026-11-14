@@ -80,3 +80,41 @@ def test_survival_distribution_sums_to_one():
     q = D.summarise(dist, rows)
     assert (q["k_q50"] <= rows["K"] + 1).all()
     assert D.distribution_metrics(dist, rows)["coverage_80"] <= 1
+
+
+def bulletin_panel() -> pd.DataFrame:
+    """30 retenues, 6 saisons : 15 franchissent le seuil en février, 15 tiennent jusqu'aux pluies."""
+    lasting = [0.9, 1.0, 1.0, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.7]
+    curves = {f"D{i:02d}": SEASON * 6 for i in range(15)} | {f"L{i:02d}": lasting * 6 for i in range(15)}
+    return make_panel(curves)
+
+
+def test_issue_bulletin_trains_on_past_seasons_only(monkeypatch):
+    monkeypatch.setattr(D, "MIN_TRAIN_ROWS", 50)
+    panel = bulletin_panel()
+    out = D.issue_bulletin(panel, "2023-11").set_index("reservoir_id")
+    assert list(out.columns) == D.BULLETIN_COLUMNS[1:]
+    assert len(out) == 30 and (out["issue_month"] == "2023-11").all()
+    assert (out.loc[out.index.str.startswith("D"), "critical_month"] == "2024-02").all()
+    assert (out.loc[out.index.str.startswith("L"), "critical_month"] == D.AFTER_JUNE).all()
+    assert out.loc["L00", "p_lasts_to_june"] > 0.9 > 0.1 > out.loc["D00", "p_lasts_to_june"]
+    # Ce qui se passe après le mois d'émission ne change pas le bulletin
+    changed = panel.copy()
+    changed.loc[changed["date"] > "2023-11-01", "fill"] = 0.99
+    pd.testing.assert_frame_equal(D.issue_bulletin(changed, "2023-11"), D.issue_bulletin(panel, "2023-11"))
+
+
+def test_issue_bulletin_rejects_wet_season_and_short_history():
+    panel = bulletin_panel()
+    with pytest.raises(ValueError, match="hors saison sèche"):
+        D.issue_bulletin(panel, "2023-08")
+    with pytest.raises(ValueError, match="historique insuffisant"):
+        D.issue_bulletin(panel, "2019-11")
+
+
+def test_forecast_drying_is_empty_when_everything_is_already_critical(monkeypatch):
+    monkeypatch.setattr(D, "MIN_TRAIN_ROWS", 50)
+    panel = bulletin_panel()
+    panel.loc[panel["date"] == "2023-11-01", "fill"] = 0.05
+    out = D.issue_bulletin(panel, "2023-11")
+    assert out.empty and list(out.columns) == D.BULLETIN_COLUMNS

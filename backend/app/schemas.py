@@ -142,6 +142,21 @@ class ReservoirHistory(BaseModel):
     points: list[AreaPoint]
 
 
+class DryingForecast(BaseModel):
+    """Mois prévu de passage sous le niveau critique. Un mois vide signifie « après juin »."""
+    reservoir_id: str
+    issue_month: str
+    fill_now: float
+    critical_fill: float
+    critical_month: Optional[str] = None
+    earliest_80: Optional[str] = None
+    latest_80: Optional[str] = None
+    lasts_to_june: bool
+    p_lasts_to_june: float
+    usual_month: Optional[str] = None
+    model_version: Optional[str] = None
+
+
 class ValidationUpdate(BaseModel):
     validation: Validation
     note: Optional[str] = Field(default=None, max_length=500)

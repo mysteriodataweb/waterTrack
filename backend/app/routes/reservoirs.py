@@ -16,6 +16,7 @@ from ..deps import require_api_key
 from ..models import FillForecast, Reservoir, ReservoirSource, WaterAreaObservation, WaterSource
 from ..schemas import (
     AreaPoint,
+    DryingForecast as DryingForecastSchema,
     FillForecast as FillForecastSchema,
     MonthlyUpdateRequest,
     ReservoirHistory,
@@ -128,6 +129,25 @@ def reservoir_forecast(reservoir_id: str, db: Session = Depends(get_db)):
     if db.get(Reservoir, reservoir_id) is None:
         raise HTTPException(status_code=404, detail="Réservoir non trouvé")
     return _forecast_payload(db, reservoir_id)
+
+
+@router.get("/reservoirs/{reservoir_id}/drying", response_model=DryingForecastSchema)
+def reservoir_drying(reservoir_id: str, db: Session = Depends(get_db)):
+    """Mois prévu de passage sous le niveau critique, émis d'octobre à mars avec le dernier bulletin."""
+    if db.get(Reservoir, reservoir_id) is None:
+        raise HTTPException(status_code=404, detail="Réservoir non trouvé")
+    issue = svc.latest_issue_month(db)
+    row = None if issue is None else svc.drying_forecasts(db, issue).get(reservoir_id)
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Pas de prévision d'assèchement : hors saison sèche (octobre à mars), "
+                   "ou retenue déjà sous le niveau critique",
+        )
+    return {
+        "reservoir_id": reservoir_id, "issue_month": issue.strftime("%Y-%m"), "fill_now": round(row.fill_now, 4),
+        "critical_fill": settings.critical_fill, "model_version": row.model_version, **svc.drying_payload(row),
+    }
 
 
 @router.get("/water-sources/{source_id}/forecast", response_model=FillForecastSchema)

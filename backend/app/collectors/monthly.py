@@ -5,7 +5,8 @@ Mise à jour mensuelle v3 : collecte satellite du dernier mois, prévisions, sta
   1. dernier mois disponible (ERA5-Land et CHIRPS sont publiés avec retard) ;
   2. surface en eau 10 m + forçages climatiques de chaque réservoir modélisable ;
   3. prévisions 1-3 mois avec le paquet `ml/runs/forecast_latest/bundle.joblib` ;
-  4. report de la prévision à 1 mois sur les sources de l'application (carte).
+  4. report de la prévision à 1 mois sur les sources de l'application (carte) ;
+  5. d'octobre à mars, mois prévu de passage sous le niveau critique (`ml/drying.py`).
 
 Déclenchée par le scheduler (si activé) ou par `POST /api/admin/monthly-update`.
 """
@@ -43,7 +44,8 @@ def forecast_and_publish(db, bundle: dict, issue_month: Optional[str] = None) ->
     n_fc = svc.upsert_forecasts(db, fc, _model_version(bundle))
     n_src = svc.apply_forecasts_to_sources(db, issue.date())
     return {"issue_month": issue.strftime("%Y-%m"), "forecasts": n_fc, "sources_updated": n_src,
-            "status_counts": fc[fc["horizon"] == 1]["status"].value_counts().to_dict()}
+            "status_counts": fc[fc["horizon"] == 1]["status"].value_counts().to_dict(),
+            **svc.publish_drying(db, issue)}
 
 
 def run_monthly_update(month: Optional[str] = None, force: bool = False) -> dict:

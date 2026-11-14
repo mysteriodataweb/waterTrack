@@ -136,10 +136,12 @@ def run(dry_run: bool = False) -> None:
         version = f"{bundle['version']} ({bundle['created']})"
         n_fc = svc.upsert_forecasts(db, fc, version)
         n_src = svc.apply_forecasts_to_sources(db)
+        drying = svc.publish_drying(db, fc["issue_month"].iloc[0])
         db.commit()
         h1 = fc[fc["horizon"] == fc["horizon"].min()]
         logger.info("Prévisions émises fin %s : %d lignes | sources mises à jour : %d | statuts h=1 : %s",
                     fc["issue_month"].iloc[0], n_fc, n_src, h1["status"].value_counts().to_dict())
+        logger.info("Mois d'assèchement : %s", drying)
     except Exception:
         db.rollback()
         raise

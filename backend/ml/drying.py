@@ -39,6 +39,12 @@ ROW_FEATURES = [
 STEP_FEATURES = ["k", "target_step", "clim_fill_target", "projected_fill"]
 FEATURES = ROW_FEATURES + STEP_FEATURES
 
+BULLETIN_COLUMNS = ["reservoir_id", "issue_month", "fill_now", "critical_month", "earliest_80", "latest_80",
+                    "p_lasts_to_june", "usual_month"]
+AFTER_JUNE = "after June"               # valeur de `critical_month` quand la retenue tient jusqu'aux pluies
+MODEL_VERSION = "drying-hgb-1"
+MIN_TRAIN_ROWS = 200                    # en dessous, l'historique est trop court pour entraîner le modèle
+
 
 # --------------------------------------------------------------------------- #
 # Calendrier hydrologique
@@ -231,10 +237,12 @@ def forecast_drying(model, panel: pd.DataFrame, issue: str | pd.Timestamp, ref_s
         raise ValueError(f"mois d'émission {issue:%Y-%m} hors saison sèche (octobre à mars)")
     rows = issue_rows(prepare(panel), ref_seasons, threshold, loso=False, only_complete=False)
     rows = rows[rows["date"] == issue].reset_index(drop=True)
+    if rows.empty:      # aucune retenue au-dessus du seuil ce mois-là (ou mois absent du panel)
+        return pd.DataFrame(columns=BULLETIN_COLUMNS)
     q = summarise(predict_distribution(model, rows), rows)
 
     def label(k, K):
-        return "after June" if k > K else f"{issue + pd.DateOffset(months=int(k)):%Y-%m}"
+        return AFTER_JUNE if k > K else f"{issue + pd.DateOffset(months=int(k)):%Y-%m}"
 
     return pd.DataFrame({
         "reservoir_id": rows["reservoir_id"],
@@ -246,6 +254,40 @@ def forecast_drying(model, panel: pd.DataFrame, issue: str | pd.Timestamp, ref_s
         "p_lasts_to_june": q["p_survive"].round(3),
         "usual_month": [label(k, K) for k, K in zip(baseline_climatology(rows), rows["K"])],
     }).sort_values(["critical_month", "p_lasts_to_june"]).reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------- #
+# Usage opérationnel : entraînement sur les saisons passées puis bulletin
+# --------------------------------------------------------------------------- #
+def make_model():
+    """Modèle retenu en validation dans le notebook (§5) : gradient boosting, risque par mois."""
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    return HistGradientBoostingClassifier(learning_rate=0.03, max_leaf_nodes=7, min_samples_leaf=80,
+                                          l2_regularization=1.0, max_iter=300, random_state=42)
+
+
+def issue_bulletin(panel: pd.DataFrame, issue: str | pd.Timestamp, threshold: float = THRESHOLD) -> pd.DataFrame:
+    """Bulletin d'assèchement émis à la fin du mois `issue`, sans modèle enregistré.
+
+    Le modèle est entraîné à la volée sur les saisons terminées avant celle de
+    `issue` (quelques secondes), puis appliqué au mois d'émission : aucune
+    information postérieure à `issue` n'est utilisée, et le modèle profite de
+    chaque nouvelle saison sans étape de réentraînement séparée.
+    """
+    issue = pd.Timestamp(issue).to_period("M").to_timestamp()
+    if issue.month not in ISSUE_MONTHS:
+        raise ValueError(f"mois d'émission {issue:%Y-%m} hors saison sèche (octobre à mars)")
+    p = prepare(panel)
+    p = p[p["date"] <= issue]
+    season = issue.year if issue.month >= 7 else issue.year - 1
+    past = sorted(int(s) for s in p["season"].unique() if s < season)
+    train = issue_rows(p, past, threshold) if past else pd.DataFrame()
+    if len(train) < MIN_TRAIN_ROWS:
+        raise ValueError(f"historique insuffisant pour le modèle d'assèchement ({len(train)} lignes d'entraînement)")
+    lines = person_period(train)
+    model = make_model().fit(lines[FEATURES], lines["y"])
+    return forecast_drying(model, p, issue, past, threshold)
 
 
 # --------------------------------------------------------------------------- #

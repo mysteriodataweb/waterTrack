@@ -32,6 +32,7 @@ backend/
 │   ├── features.py             # v3: model features (shared by notebook and API)
 │   ├── forecasting.py          # v3: inference (shared by notebook and API)
 │   ├── drying.py               # dry-season drying month (survival model, baselines, bulletin)
+│   ├── withdrawals.py          # abnormal losses: expected dry-season drop, chronic and episodic flags
 │   ├── train.py, evaluate.py   # v2 (legacy)
 │   └── runs/                   # forecast_latest/bundle.joblib (v3), latest/ (v2)
 ├── notebooks/                  # WaterTracker_pipeline.ipynb: GEE -> v3 model (research paper)
@@ -75,6 +76,7 @@ collector and the notebook give identical values for all 96 reservoirs.
 | GET    | `/api/reservoirs/{id}/history?start=&end=`             | **v3** Monthly series: surface, filling, data source, volume, rainfall | no      |
 | GET    | `/api/reservoirs/{id}/forecast`                        | **v3** 1-3 month forecast: filling, 80 % interval, P(critical level)   | no      |
 | GET    | `/api/water-sources/{id}/forecast`                     | **v3** Same forecast, through the application's water point            | no      |
+| GET    | `/api/reservoirs/{id}/drying`                          | **v3** Dry season: month of the critical level, 80 % range, P(lasts to June) | no |
 | GET    | `/api/bulletin?month=&format=json\|csv`                | **v3** Monthly bulletin, reservoirs ranked by risk; CSV export         | no      |
 | PATCH  | `/api/admin/reservoirs/{id}/validation`                | **v3** Inventory validation (`valide`, `rejete`, `a_valider`)          | API key |
 | POST   | `/api/admin/monthly-update`                            | **v3** Collect one month + forecasts + statuses                        | API key |
@@ -130,6 +132,25 @@ and gradient-boosting hazards) compared with the reservoir's usual drying month,
 projection, a linear trend and a Kaplan-Meier reference, with a temporal split by season
 (test: 2024-25 and 2025-26). `ml.drying.forecast_drying(model, panel, "YYYY-10", ref_seasons)`
 returns the bulletin table: most likely month, 80 % range, probability of lasting until June.
+
+In the API, the monthly update (and `scripts/load_v3.py`) calls `ml.drying.issue_bulletin`
+when the issue month is between October and March. The model is fitted on the fly on the
+seasons that ended before the issue month (a few seconds, no saved bundle), and the result
+is stored in the `drying_forecasts` table, created at start-up. It is served by
+`GET /api/reservoirs/{id}/drying` and in the `drying` field of each reservoir of
+`GET /api/bulletin` (`drying_*` columns in the CSV). Outside the dry season, and for a
+reservoir already below its critical level, there is no drying forecast.
+
+### Abnormal withdrawals
+
+`notebooks/WaterTracker_withdrawals.ipynb` asks which reservoirs lose water faster than
+expected in the dry season. `ml/withdrawals.py` converts the water area into a level index
+(Liebe et al., 2005), learns the expected monthly drop on the other reservoirs, and gives
+two readings: reservoirs that are persistently faster than their peers, and seasons in
+which a reservoir is faster than usual. There is no field record of withdrawals: a flag is
+an unexplained loss to check, and the detector is validated by injecting simulated
+withdrawals. Sensitivity is low (only losses that at least double the normal drop are
+found, and most of those are still missed). Not served by the API.
 
 ## Deployment (Render + Neon)
 

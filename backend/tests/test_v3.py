@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from app.collectors.water_area import area_to_volume_m3, fuse, s1_threshold_from_column
-from app.services.reservoirs import _none, bulletin_to_csv, complete_grid
+from app.services.reservoirs import _drying_month, _none, bulletin_to_csv, complete_grid, drying_payload
 
 
 # --------------------------------------------------------------------------- #
@@ -100,6 +100,30 @@ def test_bulletin_csv_flattens_horizons():
     csv = pd.read_csv(pd.io.common.StringIO(bulletin_to_csv(bulletin)))
     assert csv.loc[0, "source_ids"] == "5 6"
     assert csv.loc[0, "p_critical_h2"] == pytest.approx(0.2)
+
+
+def test_bulletin_csv_flattens_drying_forecast():
+    base = {"reservoir_id": "R05", "source_ids": [], "forecast": []}
+    drying = {"critical_month": "2027-02", "earliest_80": "2027-01", "latest_80": "2027-03",
+              "usual_month": "2027-02", "lasts_to_june": False, "p_lasts_to_june": 0.04}
+    bulletin = {"reservoirs": [{**base, "drying": drying}, {**base, "reservoir_id": "R06", "drying": None}]}
+    csv = pd.read_csv(pd.io.common.StringIO(bulletin_to_csv(bulletin))).set_index("reservoir_id")
+    assert "drying" not in csv.columns
+    assert csv.loc["R05", "drying_critical_month"] == "2027-02"
+    assert csv.loc["R05", "drying_p_lasts_to_june"] == pytest.approx(0.04)
+    assert pd.isna(csv.loc["R06", "drying_critical_month"])      # déjà sous le niveau critique
+
+
+def test_drying_month_parsing_and_payload():
+    from datetime import date
+    from types import SimpleNamespace
+
+    assert _drying_month("2027-02") == date(2027, 2, 1)
+    assert _drying_month("after June") is None
+    lasting = SimpleNamespace(critical_month=None, earliest_80=date(2027, 5, 1), latest_80=None,
+                              usual_month=None, p_lasts_to_june=0.71234)
+    assert drying_payload(lasting) == {"critical_month": None, "earliest_80": "2027-05", "latest_80": None,
+                                       "usual_month": None, "lasts_to_june": True, "p_lasts_to_june": 0.7123}
 
 
 # --------------------------------------------------------------------------- #
