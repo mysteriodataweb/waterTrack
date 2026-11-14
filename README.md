@@ -60,7 +60,7 @@ Small reservoirs carry the dry season around Ouagadougou: livestock watering, ma
 |---|---|---|
 | Filling forecast (random forest) | Filling ratio 1-3 months ahead, 80 % interval | Done, served by the API |
 | Early warning (gradient-boosting classifier) | Probability of a critical level, map statuses | Done, served by the API |
-| Drying month (survival model) | Most likely critical month, range, probability of lasting until June | Done, served by the API and the bulletin (backend); not yet shown in the frontend |
+| Drying month (survival model) | Most likely critical month, range, probability of lasting until June | Done, served by the API and shown in the bulletin and the reservoir sheet from October to March |
 | Water detection pixel by pixel (U-Net) | Better measurement of ponds under 5 ha and of water under vegetation | Not started: needs Sentinel-2 images and labelled examples |
 | Automatic inventory | Detect every reservoir each year, to scale to a region or a country | Not started: builds on the water-detection model |
 | Abnormal withdrawals | Compare the observed drawdown with the drawdown expected from comparable reservoirs, flag reservoirs that empty much faster | Analysis done (model, tests, notebook); low sensitivity, needs field checks; not in the API |
@@ -171,7 +171,7 @@ pytest -q          # API, predictions, fixes, feature leakage checks, v3 forecas
 - [x] Cloud deployment configuration (Render API, Neon PostgreSQL/PostGIS, Vercel frontend)
 - [x] Drying-month model for the dry season (`backend/ml/drying.py`)
 - [x] Serve the drying month in the API and the monthly bulletin
-- [ ] Show the drying month in the frontend (reservoir sheet and bulletin table)
+- [x] Show the drying month in the frontend (reservoir sheet and bulletin table)
 - [ ] Reliable monthly collection: external trigger, catch-up of missed months, failure alerts
 - [ ] Annual retraining with a promotion check, and monthly verification of past forecasts
 - [ ] Replace the legacy LLM advice with messages built on the v3 forecasts

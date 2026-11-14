@@ -5,7 +5,7 @@ import { BULLETIN_CSV_URL, fetchReport, isAbort, type ApiReport } from "@/lib/ap
 import { hectares, monthLong, monthShort, monthsSince, ofMonth, percent, plural, risk, signedPoints } from "@/lib/format";
 import { useTitle } from "@/lib/hooks";
 import { useMonitoring } from "@/lib/monitoring";
-import { STATUS_META, STATUS_ORDER, countByStatus, matchesQuery, type Site, type Status } from "@/lib/sites";
+import { STATUS_META, STATUS_ORDER, countByStatus, dryingMonthLabel, matchesQuery, type Site, type Status } from "@/lib/sites";
 import { AppHeader, LoadState, Notice } from "@/ui/chrome";
 import { NdwiBars } from "@/ui/charts";
 import { FillGauge } from "@/ui/FillGauge";
@@ -35,6 +35,7 @@ export default function BulletinPage() {
   const months = followed[0]?.forecast.map((f) => f.month) ?? [];
   const later = followed.filter((s) => s.status === "actif" && (s.pCriticalMax ?? 0) >= 0.5).length;
   const toValidate = followed.filter((s) => s.toValidate).length;
+  const dryingIssued = bulletin?.drying_issued === true;
 
   return (
     <div className="min-h-dvh bg-canvas">
@@ -146,18 +147,19 @@ export default function BulletinPage() {
                         {months.map((month) => (
                           <th key={month} scope="col" className="px-3 py-2.5 text-right font-semibold">Prévu {monthShort(month, false)}</th>
                         ))}
+                        {dryingIssued && <th scope="col" className="px-3 py-2.5 text-right font-semibold">Sous le seuil en</th>}
                         <th scope="col" className="px-4 py-2.5 text-right font-semibold">Risque max.</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((site) => <TableRow key={site.key} site={site} critical={criticalFill} />)}
+                      {rows.map((site) => <TableRow key={site.key} site={site} critical={criticalFill} dryingIssued={dryingIssued} />)}
                     </tbody>
                   </table>
                 </div>
 
                 {/* Fiches sur téléphone */}
                 <ul className="mt-4 space-y-2 md:hidden print:hidden">
-                  {rows.map((site) => <Card key={site.key} site={site} critical={criticalFill} />)}
+                  {rows.map((site) => <Card key={site.key} site={site} critical={criticalFill} dryingIssued={dryingIssued} />)}
                 </ul>
               </>
             )}
@@ -188,6 +190,16 @@ export default function BulletinPage() {
                       pour le mois prochain.
                     </dd>
                   </div>
+                  {dryingIssued && (
+                    <div>
+                      <dt className="font-semibold text-ink">Sous le seuil en</dt>
+                      <dd className="text-ink-2">
+                        En saison sèche, mois le plus probable où la retenue passera sous le seuil critique.
+                        « Après juin » : elle devrait tenir jusqu'au retour des pluies. « Déjà sous le seuil » :
+                        c'est le cas ce mois-ci. La fourchette figure sur la fiche de chaque retenue.
+                      </dd>
+                    </div>
+                  )}
                   <div>
                     <dt className="font-semibold text-ink">Limites</dt>
                     <dd className="text-ink-2">
@@ -237,7 +249,13 @@ function riskStyle(p: number | null) {
   return p !== null && p >= 0.5 ? { color: STATUS_META["à risque"].ink, fontWeight: 650 } : undefined;
 }
 
-function TableRow({ site, critical }: { site: Site; critical: number }) {
+/** Mois de passage sous le seuil ; sans prévision, la retenue est soit déjà dessous, soit non évaluée. */
+function dryingCell(site: Site, critical: number): string {
+  if (site.drying) return dryingMonthLabel(site.drying);
+  return site.fillNow !== null && site.fillNow < critical ? "déjà sous le seuil" : "—";
+}
+
+function TableRow({ site, critical, dryingIssued }: { site: Site; critical: number; dryingIssued: boolean }) {
   return (
     <tr className="border-b last:border-b-0 hover:bg-sunken/60">
       <th scope="row" className="px-4 py-3 text-left font-normal">
@@ -259,12 +277,13 @@ function TableRow({ site, critical }: { site: Site; critical: number }) {
       {site.forecast.map((point) => (
         <td key={point.horizon} className="num px-3 py-3 text-right text-ink">{percent(point.fill)}</td>
       ))}
+      {dryingIssued && <td className="num px-3 py-3 text-right text-ink">{dryingCell(site, critical)}</td>}
       <td className="num px-4 py-3 text-right" style={riskStyle(site.pCriticalMax)}>{risk(site.pCriticalMax)}</td>
     </tr>
   );
 }
 
-function Card({ site, critical }: { site: Site; critical: number }) {
+function Card({ site, critical, dryingIssued }: { site: Site; critical: number; dryingIssued: boolean }) {
   return (
     <li>
       <Link
@@ -285,6 +304,9 @@ function Card({ site, critical }: { site: Site; critical: number }) {
         <p className="num mt-2.5 text-[14px] text-ink-2">
           Prévu : {site.forecast.map((point) => `${percent(point.fill)} en ${monthShort(point.month, false)}`).join(", ")}
         </p>
+        {dryingIssued && (
+          <p className="num mt-0.5 text-[14px] text-ink-2">Sous le seuil critique : {dryingCell(site, critical)}</p>
+        )}
         <p className="num mt-0.5 text-[14px] text-ink-2">
           Risque maximal : <span style={riskStyle(site.pCriticalMax)}>{risk(site.pCriticalMax)}</span>
         </p>

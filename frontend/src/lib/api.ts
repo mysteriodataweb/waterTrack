@@ -38,6 +38,16 @@ export interface ApiForecastHorizon {
   p_critical: number;
 }
 
+/** Saison sèche : mois prévu de passage sous le seuil critique. Un mois `null` signifie « après juin ». */
+export interface ApiDrying {
+  critical_month: string | null;
+  earliest_80: string | null;
+  latest_80: string | null;
+  usual_month: string | null;
+  lasts_to_june: boolean;
+  p_lasts_to_june: number;
+}
+
 export interface ApiBulletinReservoir {
   reservoir_id: string;
   origin: "application" | "JRC";
@@ -54,6 +64,8 @@ export interface ApiBulletinReservoir {
   status: string;
   p_critical_max: number;
   forecast: ApiForecastHorizon[];
+  /** Absent hors saison sèche, ou si la retenue est déjà sous le seuil critique. */
+  drying?: ApiDrying | null;
 }
 
 export interface ApiBulletin {
@@ -62,6 +74,8 @@ export interface ApiBulletin {
   critical_fill: number;
   model_version: string | null;
   n_reservoirs: number;
+  /** Vrai d'octobre à mars, quand le mois de passage sous le seuil critique est prévu. */
+  drying_issued?: boolean;
   status_counts: Record<string, number>;
   reservoirs: ApiBulletinReservoir[];
 }

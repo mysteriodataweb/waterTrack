@@ -3,7 +3,7 @@ import { ArrowLeft, Check, Link2, Navigation } from "lucide-react";
 import { fetchHistory, isAbort, type ApiHistoryPoint } from "@/lib/api";
 import { coordinates, hectares, monthLong, monthShort, ofMonth, percent, risk, signedPoints, volume } from "@/lib/format";
 import { useMonitoring } from "@/lib/monitoring";
-import { STATUS_META, firstCriticalMonth, type Site } from "@/lib/sites";
+import { STATUS_META, dryingRangeLabel, firstCriticalMonth, type Site } from "@/lib/sites";
 import { Notice } from "@/ui/chrome";
 import { ForecastChart, HistoryChart } from "@/ui/charts";
 import { FillGauge } from "@/ui/FillGauge";
@@ -197,6 +197,29 @@ export function SiteDetail({ site, onBack, onRoute }: { site: Site; onBack: () =
           <p className="mt-3 text-[14px] text-ink-3">
             Fourchette : 8 fois sur 10, la valeur réelle tombe dedans. Risque : probabilité de passer sous le
             seuil critique de {percent(criticalFill)}. Prévision établie avec les mesures {ofMonth(issueMonth)}.
+          </p>
+        </Section>
+      )}
+
+      {site.drying && issueMonth && (
+        <Section title="Passage sous le seuil critique">
+          <p className="text-[17px] font-semibold leading-snug text-ink">
+            {site.drying.month
+              ? `Mois le plus probable : ${monthLong(site.drying.month)}.`
+              : "Devrait tenir jusqu'au retour des pluies, fin juin."}
+          </p>
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[15px]">
+            {dryingRangeLabel(site.drying) && (
+              <><dt className="text-ink-2">Fourchette</dt><dd className="num text-ink">{dryingRangeLabel(site.drying)}</dd></>
+            )}
+            <dt className="text-ink-2">Chance de tenir jusqu'à fin juin</dt>
+            <dd className="num text-ink">{risk(site.drying.pLasts)}</dd>
+            <dt className="text-ink-2">D'habitude</dt>
+            <dd className="num text-ink">{site.drying.usualMonth ? monthLong(site.drying.usualMonth) : "tient jusqu'à fin juin"}</dd>
+          </dl>
+          <p className="mt-3 text-[14px] text-ink-3">
+            Prévision de saison sèche, publiée d'octobre à mars avec les mesures {ofMonth(issueMonth)}.
+            Fourchette : 8 fois sur 10, le passage sous le seuil de {percent(criticalFill)} a lieu dedans.
           </p>
         </Section>
       )}

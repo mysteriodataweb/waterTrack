@@ -1,5 +1,5 @@
 import type { ApiBulletin, ApiWaterSource, Status } from "./api";
-import { addMonths, fold } from "./format";
+import { addMonths, fold, monthShort } from "./format";
 
 export type { Status };
 
@@ -12,6 +12,19 @@ export interface ForecastPoint {
   high: number;
   /** Probabilité de passer sous le seuil critique. */
   pCritical: number;
+}
+
+/** Saison sèche : quand la retenue passera sous le seuil critique. */
+export interface Drying {
+  /** Mois le plus probable, "AAAA-MM" ; `null` si la retenue tient jusqu'aux pluies (fin juin). */
+  month: string | null;
+  /** Fourchette à 80 % ; une borne `null` signifie « après juin ». */
+  earliest: string | null;
+  latest: string | null;
+  /** Mois où cette retenue passe habituellement sous le seuil. */
+  usualMonth: string | null;
+  /** Probabilité de tenir jusqu'à fin juin. */
+  pLasts: number;
 }
 
 /**
@@ -35,6 +48,8 @@ export interface Site {
   volumeM3: number | null;
   pCriticalMax: number | null;
   forecast: ForecastPoint[];
+  /** Renseigné d'octobre à mars pour les retenues encore au-dessus du seuil critique. */
+  drying: Drying | null;
   /** Plan d'eau repéré automatiquement (catalogue JRC) et pas encore confirmé par un gestionnaire. */
   toValidate: boolean;
   origin: "application" | "JRC" | null;
@@ -222,6 +237,13 @@ export function buildSites(
         high: Math.max(f.fill_hi80, f.fill_pred),
         pCritical: f.p_critical,
       })),
+      drying: reservoir.drying ? {
+        month: reservoir.drying.critical_month,
+        earliest: reservoir.drying.earliest_80,
+        latest: reservoir.drying.latest_80,
+        usualMonth: reservoir.drying.usual_month,
+        pLasts: reservoir.drying.p_lasts_to_june,
+      } : null,
       toValidate: reservoir.validation === "a_valider",
       origin: reservoir.origin,
       ndwi: null,
@@ -249,6 +271,7 @@ export function buildSites(
       volumeM3: null,
       pCriticalMax: bulletin ? null : source.risk_score,
       forecast: [],
+      drying: null,
       toValidate: false,
       origin: null,
       ndwi: source.ndwi_moyen,
@@ -269,6 +292,21 @@ export function matchesQuery(site: Site, query: string): boolean {
   if (!needle) return true;
   const haystack = fold(`${site.name} ${site.key} ${site.zone ?? ""} ${STATUS_META[site.status].label}`);
   return needle.split(/\s+/).every((word) => haystack.includes(word));
+}
+
+/** « févr. 2027 », ou « après juin » si la retenue tient jusqu'au retour des pluies. */
+export function dryingMonthLabel(drying: Drying, withYear = true): string {
+  return drying.month ? monthShort(drying.month, withYear) : "après juin";
+}
+
+/** Fourchette à 80 % en clair, ou `null` si elle se réduit au mois le plus probable. */
+export function dryingRangeLabel(drying: Drying): string | null {
+  if (drying.earliest === drying.latest) return null;
+  if (drying.earliest && drying.latest) {
+    const sameYear = drying.earliest.slice(0, 4) === drying.latest.slice(0, 4);
+    return `de ${monthShort(drying.earliest, !sameYear)} à ${monthShort(drying.latest)}`;
+  }
+  return drying.earliest ? `à partir de ${monthShort(drying.earliest)}, ou après juin` : null;
 }
 
 /** Premier mois où la retenue a plus d'une chance sur deux de passer sous le seuil. */
