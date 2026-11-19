@@ -32,3 +32,7 @@ htmlcov/
 # Système
 .DS_Store
 Thumbs.db
+
+# Imagettes du modele de detection de l eau, roues telechargees
+data/unet/
+.cache_wheels/
