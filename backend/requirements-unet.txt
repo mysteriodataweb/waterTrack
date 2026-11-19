@@ -1,0 +1,5 @@
+# Entrainement du U-Net de detection de l'eau (ml/unet_*.py) - hors deploiement Render.
+# torch s'installe a part (roue CPU ou CUDA selon la machine) : voir scripts/unet_cloud_train.sh
+numpy>=1.26
+pandas>=2.1
+pytest>=8
