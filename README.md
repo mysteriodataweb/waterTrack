@@ -61,8 +61,33 @@ Small reservoirs carry the dry season around Ouagadougou: livestock watering, ma
 | Filling forecast (random forest) | Filling ratio 1-3 months ahead, 80 % interval | Done, served by the API |
 | Early warning (gradient-boosting classifier) | Probability of a critical level, map statuses | Done, served by the API |
 | Drying month (survival model) | Most likely critical month, range, probability of lasting until June | Done, served by the API and shown in the bulletin and the reservoir sheet from October to March |
-| Water detection pixel by pixel (U-Net) | Better measurement of ponds under 5 ha and of water under vegetation | Not started: needs Sentinel-2 images and labelled examples |
-| Automatic inventory | Detect every reservoir each year, to scale to a region or a country | Not started: builds on the water-detection model |
+| Water detection pixel by pixel (U-Net) | Better measurement of ponds under 5 ha and of water under vegetation | First model trained (12 epochs on CPU): on ambiguous pixels it beats the MNDWI rule, not yet Dynamic World (see below); not used in the monthly measurement yet |
+| Automatic inventory | Detect every reservoir each year, to scale to a region or a country | Code ready (`ml/unet_inventory.py`); not run yet, needs Earth Engine |
+
+### U-Net water detection: first results
+
+The current measurement classifies each pixel alone with a threshold (MNDWI > 0) and hesitates on shorelines, turbid or shallow water and aquatic vegetation. The U-Net sees each pixel's neighbourhood and six Sentinel-2 bands.
+
+- **Data**: 1,768 Sentinel-2 chips of 128 × 128 pixels at 10 m, published in the [`unet-data-v1`](https://github.com/mysteriodataweb/waterTrack/releases/tag/unet-data-v1) release. Chips with no labelled pixel are left out, leaving 1,230 for training, 389 for validation and 118 for test (test chips come from blocks never seen in training).
+- **Labels without manual work**: a pixel is "water" when both the MNDWI index and Dynamic World say so clearly, "land" when both clearly say no. Every other pixel is ignored in training: those are the ambiguous cases the network has to learn to handle.
+- **Training**: 12 epochs on CPU (about 64 s each), best validation IoU 0.9995 at epoch 11.
+
+**Results on the 118 test chips** (`backend/ml/unet_results/metrics_test.json`):
+
+| Method | IoU on labelled pixels | Ambiguous pixels: radar-dark among "water" | Radar-dark among "land" | Separation | Water area |
+|---|---|---|---|---|---|
+| MNDWI > 0 rule (current) | 1.000 | 49.6 % | 16.9 % | 0.33 | 808 ha |
+| **U-Net** | 0.998 | 56.2 % | **9.1 %** | **0.47** | 919 ha |
+| Dynamic World | 1.000 | 67.7 % | 14.7 % | **0.53** | 742 ha |
+
+How to read it:
+- **The IoU on labelled pixels is not informative**: those pixels are the obvious cases, and the two references score 1.000 because the labels come from them. It only shows that the U-Net reproduces the easy cases.
+- **The real test is the 6.4 % of ambiguous pixels**, judged with Sentinel-1 radar, which the network never saw: open water is dark on radar. A good map puts many radar-dark pixels in "water" and few in "land"; the separation is the difference between the two shares.
+- **The U-Net clearly beats the current rule** on ambiguous pixels (0.47 vs 0.33). Where they disagree, the radar mostly sides with the U-Net: 64 % of the 13,436 pixels it calls water and the rule calls land are radar-dark, against 17 % of the 2,289 pixels the rule calls water and the U-Net rejects.
+- **It is still behind Dynamic World** (0.47 vs 0.53). It misses the least water (lowest share of radar-dark pixels left in "land"), but it also adds water the radar does not confirm, hence a larger water area.
+- **Limits**: radar is not ground truth (wind brightens water; dry sandy soils and smooth surfaces look dark; vegetated water looks brighter), so these figures show a direction, not an accuracy. This is a short CPU run; the full 40-epoch training on GPU (`backend/notebooks/WaterTracker_unet_colab.ipynb`) may close the gap with Dynamic World.
+
+Training guide and how to retrieve the model: `backend/ml/UNET_TRAINING.md`.
 | Abnormal withdrawals | Compare the observed drawdown with the drawdown expected from comparable reservoirs, flag reservoirs that empty much faster | Analysis done (model, tests, notebook); low sensitivity, needs field checks; not in the API |
 
 ---
@@ -177,7 +202,9 @@ pytest -q          # API, predictions, fixes, feature leakage checks, v3 forecas
 - [ ] Replace the legacy LLM advice with messages built on the v3 forecasts
 - [x] Abnormal-withdrawal analysis (`backend/ml/withdrawals.py`): a short list of reservoirs to check
 - [ ] Field checks of the flagged reservoirs, then serve the list in the API
-- [ ] Water detection with a U-Net, then automatic inventory of all reservoirs
+- [x] First U-Net water-detection model (12 CPU epochs, results in `backend/ml/unet_results/`)
+- [ ] Full U-Net training (40 epochs on GPU), then decide whether it replaces the MNDWI rule in the monthly measurement
+- [ ] Run the automatic inventory with the U-Net and check the candidate water bodies
 - [ ] Field validation with a partner (staff gauges, photos)
 - [ ] Authentication / user roles
 - [ ] Automated alerts (email / SMS) on critical thresholds
