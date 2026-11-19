@@ -1,0 +1,110 @@
+{
+  "n_chips": 118,
+  "ambiguous_share_of_valid": 0.06373039723697355,
+  "labelled": {
+    "unet": {
+      "precision": 0.9982165857525017,
+      "recall": 0.9993651675362549,
+      "f1": 0.998790546435086,
+      "iou": 0.9975840148919738,
+      "n_water": 50407,
+      "n_pixels": 1803259
+    },
+    "mndwi_threshold": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "iou": 1.0,
+      "n_water": 50407,
+      "n_pixels": 1803259
+    },
+    "dynamic_world": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "iou": 1.0,
+      "n_water": 50407,
+      "n_pixels": 1803259
+    }
+  },
+  "radar_ambiguous": {
+    "unet": {
+      "dark_in_water": 0.5617684677944832,
+      "dark_in_land": 0.09065528607271117,
+      "separation": 0.471113181721772,
+      "n_water": 41437,
+      "n_land": 81308
+    },
+    "mndwi_threshold": {
+      "dark_in_water": 0.4960458679319889,
+      "dark_in_land": 0.16878253622953127,
+      "separation": 0.32726333170245764,
+      "n_water": 30348,
+      "n_land": 92397
+    },
+    "dynamic_world": {
+      "dark_in_water": 0.6766129371659442,
+      "dark_in_land": 0.14721571163016245,
+      "separation": 0.5293972255357817,
+      "n_water": 23761,
+      "n_land": 98984
+    }
+  },
+  "radar_all_valid": {
+    "unet": {
+      "dark_in_water": 0.7255881264825575,
+      "dark_in_land": 0.017261853484702595,
+      "separation": 0.708326272997855,
+      "n_water": 91902,
+      "n_land": 1834102
+    },
+    "mndwi_threshold": {
+      "dark_in_water": 0.7238189585784162,
+      "dark_in_land": 0.02161822063038647,
+      "separation": 0.7022007379480297,
+      "n_water": 80755,
+      "n_land": 1845249
+    },
+    "dynamic_world": {
+      "dark_in_water": 0.801895696257146,
+      "dark_in_land": 0.02098889966498113,
+      "separation": 0.7809067965921648,
+      "n_water": 74168,
+      "n_land": 1851836
+    }
+  },
+  "disagreement": {
+    "unet_water_rule_land": {
+      "n": 13436,
+      "radar_dark": 0.6420809764810955
+    },
+    "rule_water_unet_land": {
+      "n": 2289,
+      "radar_dark": 0.17300131061598953
+    },
+    "radar_dark_agreed_water": 0.739887339739505,
+    "radar_dark_agreed_land": 0.017067244309326334
+  },
+  "water_area_ha": {
+    "unet": 919.02,
+    "mndwi_threshold": 807.55,
+    "dynamic_world": 741.68
+  },
+  "split": "test",
+  "training": {
+    "best_val_iou": 0.9995348232328285,
+    "best_epoch": 11,
+    "epochs": 12,
+    "n_train": 1230,
+    "n_val": 389,
+    "bands": [
+      "B2",
+      "B3",
+      "B4",
+      "B8",
+      "B11",
+      "B12"
+    ],
+    "seed": 42
+  }
+}
