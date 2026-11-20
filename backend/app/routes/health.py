@@ -37,7 +37,6 @@ def health():
         db_ok = "error"
 
     external: dict[str, str] = {}
-    external["groq"] = "ok" if settings.groq_api_key else "error"
     external["openrouteservice"] = "ok" if settings.openroute_api_key else "error"
 
     data = data_freshness() if db_ok == "ok" else {"data": "unknown"}

@@ -26,8 +26,6 @@ class Settings(BaseSettings):
     cors_origin_regex: str = ""
 
     # Services externes
-    groq_api_key: str = ""
-    groq_model: str = "qwen/qwen3.8-27b"
     openroute_api_key: str = ""
 
     # Google Earth Engine

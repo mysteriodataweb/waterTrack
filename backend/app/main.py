@@ -11,7 +11,7 @@ from .database import create_all
 from .router import api_router
 from .tls import use_system_certificates
 
-# Avant tout appel sortant (Groq, OpenRouteService, Earth Engine).
+# Avant tout appel sortant (OpenRouteService, Earth Engine).
 use_system_certificates()
 
 logging.basicConfig(

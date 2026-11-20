@@ -9,7 +9,6 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from app.config import settings
 from app.deps import require_api_key
-from app.services.llm import _strip_reasoning
 from app.services.ml import PeriodsUntilDryService
 
 
@@ -72,9 +71,3 @@ def test_recompute_endpoint_requires_api_key():
 
     params = inspect.signature(recompute_all_scores).parameters
     assert any(getattr(p.default, "dependency", None) is require_api_key for p in params.values())
-
-
-def test_strip_reasoning_block():
-    assert _strip_reasoning("<think>raisonnement</think>\n Agir vite.") == "Agir vite."
-    assert _strip_reasoning("<think>seulement</think>") is None
-    assert _strip_reasoning(None) is None

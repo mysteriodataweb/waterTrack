@@ -7,8 +7,9 @@ Monitoring and early-warning system for the reservoirs around Ouagadougou
   gap-filled with Sentinel-1), forecast of the **filling ratio 1-3 months ahead** with a
   prediction interval and the probability of reaching a critical level, **monthly
   bulletin**, automatic updates.
-- **v2 (legacy, kept)**: half-yearly NDWI per water point, Prophet, Groq recommendations.
-  Still served by `/prediction` (used by the current map).
+- **v2 (legacy, kept)**: half-yearly NDWI per water point, Prophet. Its LLM-written advice
+  (Groq) is replaced by advice built on the v3 forecasts (`app/services/advice.py`).
+  Still served by `/prediction`; the current map pages no longer call it.
 
 ---
 
@@ -26,7 +27,7 @@ backend/
 │   ├── schemas.py              # Pydantic schemas (requests + responses)
 │   ├── deps.py                 # API key (write endpoints)
 │   ├── routes/                 # water, prediction, navigation, report, health, reservoirs (v3)
-│   ├── services/               # reservoirs (v3: panel, bulletin), ml, prophet, risk, llm, recommande
+│   ├── services/               # reservoirs (v3: panel, bulletin), advice (v3), ml, prophet, risk
 │   └── collectors/             # water_area + monthly (v3), scheduler, earth_engine + ingest (v2)
 ├── ml/
 │   ├── features.py             # v3: model features (shared by notebook and API)
@@ -47,7 +48,7 @@ backend/
 python -m venv venv
 venv\Scripts\activate                       # Windows
 pip install -r requirements.txt
-copy .env.example .env                       # DATABASE_URL, API_KEY, GROQ, ORS, GEE_PROJECT
+copy .env.example .env                       # DATABASE_URL, API_KEY, ORS, GEE_PROJECT
 earthengine authenticate                     # once, locally
 uvicorn app.main:app --reload                # interactive docs: http://localhost:8000/docs
 ```
@@ -86,14 +87,15 @@ collector and the notebook give identical values for all 96 reservoirs.
 | GET    | `/api/reservoirs/{id}/forecast`                        | **v3** 1-3 month forecast: filling, 80 % interval, P(critical level)   | no      |
 | GET    | `/api/water-sources/{id}/forecast`                     | **v3** Same forecast, through the application's water point            | no      |
 | GET    | `/api/reservoirs/{id}/drying`                          | **v3** Dry season: month of the critical level, 80 % range, P(lasts to June) | no |
-| GET    | `/api/bulletin?month=&format=json\|csv`                | **v3** Monthly bulletin, reservoirs ranked by risk; CSV export         | no      |
+| GET    | `/api/bulletin?month=&format=json\|csv`                | **v3** Monthly bulletin, reservoirs ranked by risk, with alert level and one-line summary; CSV export | no |
+| GET    | `/api/reservoirs/{id}/advice`                          | **v3** Advice for action for four audiences (see below)                | no      |
 | GET    | `/api/verification?months=12`                          | **v3** Record of the forecasts already issued, once their target month is measured: error vs the seasonal normal, 80 % interval coverage, alerts | no |
 | PATCH  | `/api/admin/reservoirs/{id}/validation`                | **v3** Inventory validation (`valide`, `rejete`, `a_valider`)          | API key |
 | POST   | `/api/admin/monthly-update`                            | **v3** Collect `month`, or catch up the missing months (`max_months`, default 3) + forecasts + statuses | API key |
 | POST   | `/api/admin/recompute`                                 | Water-point statuses (v3 if forecasts exist, otherwise v2)             | API key |
 | GET    | `/api/water-sources?page=&zone=&status=`               | Paginated water points                                                 | no      |
 | GET    | `/api/water-sources/{id}`                              | Water-point details                                                    | no      |
-| GET    | `/api/water-sources/{id}/prediction?profil=`           | v2: Prophet drying-up forecast + Groq recommendation                   | no      |
+| GET    | `/api/water-sources/{id}/prediction`                   | v2: Prophet drying-up curve                                            | no      |
 | POST   | `/api/predict`                                         | v2: periods until drying up                                            | API key |
 | POST   | `/api/admin/collect`                                   | v2: half-yearly NDWI collection                                        | API key |
 | GET    | `/api/report/summary`                                  | Aggregated report                                                      | no      |
@@ -111,6 +113,29 @@ detected by satellite) are set to `inconnu` (unknown).
 start as `a_valider` (to validate); a `rejete` (rejected) water body is left out of the
 bulletin. Status and validation values are kept in French because the API and the
 frontend already use them.
+
+**Advice for action** (`app/services/advice.py`, `GET /api/reservoirs/{id}/advice`): fixed
+rules turn the latest v3 forecast, and the drying month in the dry season, into advice for
+four audiences: residents and users (`communaute`), field agent (`agent_terrain`), NGO
+(`ong`) and government service (`gouvernement`). It replaces the v2 text written by an LLM
+(Groq) from the half-yearly NDWI analysis, which the audit found unreliable. Every sentence
+repeats a number of the forecast shown on the reservoir sheet, and the same situation
+always gives the same advice.
+
+| Level | When |
+|---|---|
+| `critique` | almost dry next month (status `tari`) |
+| `alerte` | at least one chance in two of falling below the critical level next month (`à risque`), or already below it and staying there |
+| `vigilance` | no alert next month, but a high risk at 2-3 months, a risk of at least 20 %, a reservoir still below the critical level that refills, or a drying month earlier than usual |
+| `normal` | no alert within three months |
+
+The response gives the level, a one-line summary, the facts with their numbers (measured
+filling and change over a month, forecast with its 80 % range, drying month), the actions
+for each audience, the deadline (relative to today, because the data lag one to two months
+behind the calendar), caveats (data behind schedule, wide interval, water body not yet
+confirmed in the field, satellite estimate to check on site) and, for each audience, the
+whole message as text to copy or share. The bulletin carries the same level and summary
+for every reservoir (`level`, `message`, also in the CSV).
 
 ## Research notebook
 
@@ -271,7 +296,8 @@ pytest -q
 
 Unit tests (S2/S1 fusion, features without temporal leakage, v2 fixes, bulletin, monthly
 update: catch-up, quality warnings, bundle fingerprint, exit codes; forecast verification;
-retraining: evaluation window, no leakage, promotion check, candidate served by the inference) and API
+retraining: evaluation window, no leakage, promotion check, candidate served by the inference;
+advice: level of each situation, numbers repeated, deadlines, caveats, bulletin) and API
 integration tests on the local database (skipped automatically when v3 data is missing).
 
 ## Security

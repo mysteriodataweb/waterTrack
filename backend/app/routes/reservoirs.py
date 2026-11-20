@@ -15,6 +15,7 @@ from ..database import get_db
 from ..deps import require_api_key
 from ..models import FillForecast, Reservoir, ReservoirSource, WaterAreaObservation, WaterSource
 from ..schemas import (
+    Advice as AdviceSchema,
     AreaPoint,
     DryingForecast as DryingForecastSchema,
     FillForecast as FillForecastSchema,
@@ -23,6 +24,7 @@ from ..schemas import (
     ReservoirSummary,
     ValidationUpdate,
 )
+from ..services import advice as advice_svc
 from ..services import reservoirs as svc
 
 router = APIRouter()
@@ -148,6 +150,28 @@ def reservoir_drying(reservoir_id: str, db: Session = Depends(get_db)):
         "reservoir_id": reservoir_id, "issue_month": issue.strftime("%Y-%m"), "fill_now": round(row.fill_now, 4),
         "critical_fill": settings.critical_fill, "model_version": row.model_version, **svc.drying_payload(row),
     }
+
+
+@router.get("/reservoirs/{reservoir_id}/advice", response_model=AdviceSchema)
+def reservoir_advice(reservoir_id: str, db: Session = Depends(get_db)):
+    """Conseil pour agir, pour chaque public, construit par des règles fixes sur la dernière prévision v3."""
+    from ..collectors.monthly import freshness   # import tardif : charge Earth Engine
+
+    reservoir = db.get(Reservoir, reservoir_id)
+    if reservoir is None:
+        raise HTTPException(status_code=404, detail="Réservoir non trouvé")
+    payload = _forecast_payload(db, reservoir_id)
+    issue = _month(payload["issue_month"])
+    drying = svc.drying_forecasts(db, issue).get(reservoir_id)
+    advice = advice_svc.build_advice(
+        payload,
+        drying=None if drying is None else svc.drying_payload(drying),
+        fill_change=svc.fill_change(db, reservoir_id, issue),
+        data_stale=freshness(svc.latest_observed_month(db))["data"] == "stale",
+        to_validate=reservoir.validation == "a_valider",
+    )
+    return {"reservoir_id": reservoir_id, "issue_month": payload["issue_month"],
+            "model_version": payload["model_version"], **advice}
 
 
 @router.get("/water-sources/{source_id}/forecast", response_model=FillForecastSchema)

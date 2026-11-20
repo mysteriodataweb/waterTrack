@@ -20,7 +20,7 @@ const STEPS = [
   },
   {
     title: "Agir",
-    body: "Le bulletin classe les retenues de la plus menacée à la plus sûre. Chaque fiche propose l'itinéraire pour s'y rendre et un conseil rédigé pour celui qui doit décider.",
+    body: "Le bulletin classe les retenues de la plus menacée à la plus sûre. Chaque fiche propose l'itinéraire pour s'y rendre et un conseil tiré de la prévision, adapté à celui qui doit agir.",
   },
 ];
 

@@ -174,6 +174,16 @@ def test_api_forecast_for_source_and_reservoir(client):
 
 
 @v3
+def test_api_advice_matches_the_bulletin(client):
+    row = client.get("/api/bulletin").json()["reservoirs"][0]
+    advice = client.get(f"/api/reservoirs/{row['reservoir_id']}/advice")
+    assert advice.status_code == 200
+    body = advice.json()
+    assert (body["level"], body["headline"]) == (row["level"], row["message"])
+    assert set(body["audiences"]) == {"communaute", "agent_terrain", "ong", "gouvernement"}
+
+
+@v3
 def test_api_bulletin_json_and_csv(client):
     b = client.get("/api/bulletin").json()
     assert b["n_reservoirs"] == len(b["reservoirs"]) > 0

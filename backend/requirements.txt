@@ -22,9 +22,6 @@ earthengine-api>=0.1.400
 # Certificats du système pour TLS (antivirus qui inspectent HTTPS sous Windows)
 truststore>=0.9
 
-# ---- Recommandations IA ----
-groq>=0.14
-
 # ---- Planification ----
 apscheduler>=3.10
 

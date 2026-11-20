@@ -48,7 +48,7 @@ src/
 - `/api/bulletin` : état et prévision de chaque retenue (source principale).
 - `/api/water-sources` : inventaire des points d'eau, lu page par page.
 - `/api/reservoirs/{id}/history` : série mensuelle d'une retenue.
-- `/api/water-sources/{id}/prediction` : conseil rédigé, demandé à la main depuis la fiche.
+- `/api/reservoirs/{id}/advice` : conseil pour agir, par public, construit par des règles fixes sur la prévision v3.
 - `/api/navigation/route` et `/reverse` : itinéraire.
 - `public/water-polygons.geojson` : contours OpenStreetMap des plans d'eau.
 

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Literal
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -14,12 +12,9 @@ from ..schemas import (
 )
 from ..services.ml import PredictionService, MLUnavailableError, RuleBasedRiskService
 from ..services.prophet_service import predire_tarissement, ProphetUnavailableError
-from ..services.recommande import generer_recommandation, generer_toutes_recommandations
 from ..deps import require_api_key
 
 router = APIRouter()
-
-Profil = Literal["ong", "gouvernement", "agent_terrain", "communaute", "all"]
 
 
 @router.post("/predict", response_model=PredictResponse)
@@ -48,11 +43,9 @@ def predict_risk(
 
 
 @router.get("/water-sources/{source_id}/prediction", response_model=TarissementPrediction)
-def get_prediction(
-    source_id: int,
-    profil: Profil = "communaute",
-    db: Session = Depends(get_db),
-):
+def get_prediction(source_id: int, db: Session = Depends(get_db)):
+    """[v2, historique] Courbe NDWI par semestre (Prophet). Le conseil pour agir est servi par
+    /reservoirs/{id}/advice, construit sur les prévisions v3."""
     source = db.get(WaterSource, source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Source non trouvée")
@@ -64,11 +57,6 @@ def get_prediction(
 
     if "erreur" in prediction:
         raise HTTPException(status_code=404, detail=prediction["erreur"])
-
-    if profil == "all":
-        prediction["recommandations"] = generer_toutes_recommandations(prediction)
-    else:
-        prediction["recommandation"] = generer_recommandation(prediction, profil)
 
     return prediction
 

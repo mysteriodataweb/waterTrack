@@ -1,4 +1,4 @@
-"""Certificats TLS du système pour tous les appels sortants (GEE, Groq, ORS).
+"""Certificats TLS du système pour tous les appels sortants (GEE, ORS).
 
 Sous Windows, un antivirus qui inspecte HTTPS (Avast, Kaspersky...) signe le
 trafic avec sa propre autorité, inconnue de `certifi` : les appels échouent

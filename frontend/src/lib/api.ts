@@ -10,7 +10,8 @@ export const BULLETIN_CSV_URL = `${BASE}/api/bulletin?format=csv`;
 
 export type Status = "actif" | "à risque" | "tari" | "inconnu";
 export type NavigationProfile = "driving-car" | "foot-walking" | "cycling-regular";
-export type AdviceProfile = "ong" | "gouvernement" | "agent_terrain" | "communaute";
+export type AdviceAudience = "communaute" | "agent_terrain" | "ong" | "gouvernement";
+export type AdviceLevel = "normal" | "vigilance" | "alerte" | "critique";
 
 export interface GeoPoint {
   lat: number;
@@ -66,6 +67,9 @@ export interface ApiBulletinReservoir {
   forecast: ApiForecastHorizon[];
   /** Absent hors saison sèche, ou si la retenue est déjà sous le seuil critique. */
   drying?: ApiDrying | null;
+  /** Niveau d'alerte et phrase de synthèse, comme le conseil de la fiche. */
+  level?: AdviceLevel;
+  message?: string;
 }
 
 export interface ApiBulletin {
@@ -95,14 +99,21 @@ export interface ApiHistory {
   points: ApiHistoryPoint[];
 }
 
+/** Conseil pour agir, construit par des règles fixes sur la prévision v3. */
 export interface ApiAdvice {
-  ndwi_actuel?: number;
-  tendance?: number;
-  vitesse_degradation?: string;
-  date_tarissement?: string | null;
-  confiance?: number;
-  predictions?: Array<{ periode: string; probabilite_tarissement: number }>;
-  recommandation?: string | null;
+  reservoir_id: string;
+  issue_month: string;
+  model_version: string | null;
+  level: AdviceLevel;
+  reason: string;
+  headline: string;
+  /** Les faits, avec les chiffres de la prévision. */
+  situation: string[];
+  deadline_month: string | null;
+  /** Échéance d'action ("dès maintenant", "avant février 2027"), absente sans alerte. */
+  when: string | null;
+  caveats: string[];
+  audiences: Record<AdviceAudience, { label: string; actions: string[]; text: string }>;
 }
 
 export interface ApiRouteStep {
@@ -264,9 +275,8 @@ export function fetchHistory(reservoirId: string, signal?: AbortSignal): Promise
   return request<ApiHistory>(`/api/reservoirs/${encodeURIComponent(reservoirId)}/history`, { signal });
 }
 
-export function fetchAdvice(sourceId: number, profile: AdviceProfile, signal?: AbortSignal): Promise<ApiAdvice> {
-  // Prophet puis un modèle de langage : la réponse peut prendre une dizaine de secondes.
-  return request<ApiAdvice>(`/api/water-sources/${sourceId}/prediction?profil=${profile}`, { signal, timeoutMs: 60_000 });
+export function fetchAdvice(reservoirId: string, signal?: AbortSignal): Promise<ApiAdvice> {
+  return request<ApiAdvice>(`/api/reservoirs/${encodeURIComponent(reservoirId)}/advice`, { signal });
 }
 
 export function fetchRoute(

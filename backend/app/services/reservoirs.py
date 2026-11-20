@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from ..config import settings
+from . import advice
 from ..models import DryingForecast, FillForecast, Reservoir, ReservoirSource, WaterAreaObservation, WaterSource
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,17 @@ def forecasts_frame(db: Session, issue_month: Optional[date] = None) -> pd.DataF
         return pd.DataFrame()
     rows = db.execute(select(FillForecast).where(FillForecast.issue_month == issue_month)).scalars().all()
     return pd.DataFrame([{c.name: getattr(r, c.name) for c in FillForecast.__table__.columns} for r in rows])
+
+
+def fill_change(db: Session, reservoir_id: str, month: date) -> Optional[float]:
+    """Évolution du remplissage sur le mois écoulé (None si l'un des deux mois manque)."""
+    prev = (pd.Timestamp(month) - pd.DateOffset(months=1)).date()
+    fills = dict(db.execute(
+        select(WaterAreaObservation.month, WaterAreaObservation.fill)
+        .where(WaterAreaObservation.reservoir_id == reservoir_id, WaterAreaObservation.month.in_([month, prev]))
+    ).all())
+    now, before = _none(fills.get(month)), _none(fills.get(prev))
+    return None if now is None or before is None else float(now - before)
 
 
 def reservoir_of_source(db: Session, source_id: int) -> Optional[str]:
@@ -319,6 +331,7 @@ def build_bulletin(db: Session, issue_month: Optional[date] = None, include_reje
 
     wide = fc.pivot(index="reservoir_id", columns="horizon", values=["fill_pred", "fill_lo80", "fill_hi80", "p_critical"])
     drying = drying_forecasts(db, issue)
+    by_reservoir = {rid: g.sort_values("horizon") for rid, g in fc.groupby("reservoir_id")}
     rows = []
     for rid, r in res.iterrows():
         if rid not in wide.index:
@@ -326,6 +339,16 @@ def build_bulletin(db: Session, issue_month: Optional[date] = None, include_reje
         fill_now = _none(now["fill"].get(rid)) if rid in now.index else None
         fill_prev = _none(before.get(rid))
         horizons = sorted(fc["horizon"].unique())
+        dry = drying_payload(drying[rid]) if rid in drying else None
+        g = by_reservoir[rid]
+        assessment = advice.assess({
+            "issue_month": pd.Timestamp(issue).strftime("%Y-%m"),
+            "fill_now": float(g["fill_now"].iloc[0]), "critical_fill": settings.critical_fill,
+            "horizons": [{"horizon": int(h.horizon), "target_month": pd.Timestamp(h.target_month).strftime("%Y-%m"),
+                          "fill_pred": float(h.fill_pred), "fill_lo80": float(h.fill_lo80),
+                          "fill_hi80": float(h.fill_hi80), "p_critical": float(h.p_critical), "status": h.status}
+                         for h in g.itertuples()],
+        }, dry)
         rows.append({
             "reservoir_id": rid,
             "origin": r["origin"],
@@ -340,6 +363,9 @@ def build_bulletin(db: Session, issue_month: Optional[date] = None, include_reje
             "volume_m3": _round(now["volume_m3"].get(rid) if rid in now.index else None, 0),
             "area_source": now["area_source"].get(rid) if rid in now.index else None,
             "status": fc[(fc.reservoir_id == rid) & (fc.horizon == horizons[0])]["status"].iloc[0],
+            # Niveau d'alerte et phrase de synthèse, comme le conseil de la fiche (app/services/advice.py)
+            "level": assessment["level"],
+            "message": assessment["headline"],
             "p_critical_max": round(float(wide.loc[rid, "p_critical"].max()), 4),
             "forecast": [
                 {"horizon": int(h), "fill_pred": round(float(wide.loc[rid, ("fill_pred", h)]), 4),
@@ -349,7 +375,7 @@ def build_bulletin(db: Session, issue_month: Optional[date] = None, include_reje
                 for h in horizons
             ],
             # Saison sèche seulement ; None si la retenue est déjà sous le niveau critique
-            "drying": drying_payload(drying[rid]) if rid in drying else None,
+            "drying": dry,
         })
     rows.sort(key=lambda x: (-x["p_critical_max"], x["fill_now"] if x["fill_now"] is not None else 9))
     statuses = pd.Series([r["status"] for r in rows]).value_counts().to_dict()

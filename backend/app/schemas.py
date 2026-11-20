@@ -6,7 +6,8 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 Status = Literal["actif", "à risque", "tari", "inconnu"]
-Profil = Literal["ong", "gouvernement", "agent_terrain", "communaute"]
+Audience = Literal["communaute", "agent_terrain", "ong", "gouvernement"]
+AdviceLevel = Literal["normal", "vigilance", "alerte", "critique"]
 Vitesse = Literal["rapide", "lente", "stable"]
 
 
@@ -83,8 +84,6 @@ class TarissementPrediction(BaseModel):
     confiance: float
     probabilite_tarissement: float
     predictions: list[PeriodicPrediction]
-    recommandation: Optional[str] = None
-    recommandations: Optional[dict[str, str]] = None
 
 
 Validation = Literal["a_valider", "valide", "rejete"]
@@ -155,6 +154,28 @@ class DryingForecast(BaseModel):
     p_lasts_to_june: float
     usual_month: Optional[str] = None
     model_version: Optional[str] = None
+
+
+class AudienceAdvice(BaseModel):
+    label: str
+    actions: list[str]
+    # Message complet à copier ou partager (synthèse, faits, actions, échéance, réserves)
+    text: str
+
+
+class Advice(BaseModel):
+    """Conseil pour agir, construit par des règles fixes sur la prévision v3 (app/services/advice.py)."""
+    reservoir_id: str
+    issue_month: str
+    model_version: Optional[str] = None
+    level: AdviceLevel
+    reason: str
+    headline: str
+    situation: list[str]
+    deadline_month: Optional[str] = None
+    when: Optional[str] = None
+    caveats: list[str]
+    audiences: dict[Audience, AudienceAdvice]
 
 
 class ValidationUpdate(BaseModel):

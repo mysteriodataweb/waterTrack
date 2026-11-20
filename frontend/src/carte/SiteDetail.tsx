@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft, Check, Link2, Navigation } from "lucide-react";
 import { fetchHistory, isAbort, type ApiHistoryPoint } from "@/lib/api";
+import { copyText } from "@/lib/clipboard";
 import { coordinates, hectares, monthLong, monthShort, ofMonth, percent, risk, signedPoints, volume } from "@/lib/format";
 import { useMonitoring } from "@/lib/monitoring";
 import { STATUS_META, dryingRangeLabel, firstCriticalMonth, type Site } from "@/lib/sites";
@@ -61,23 +62,7 @@ export function SiteDetail({ site, onBack, onRoute }: { site: Site; onBack: () =
   useEffect(() => setCopied(null), [site.key]);
 
   const copyLink = async () => {
-    const url = window.location.href;
-    let done = false;
-    try {
-      await navigator.clipboard.writeText(url);
-      done = true;
-    } catch {
-      // Presse-papiers moderne indisponible (page servie sans https) : ancienne méthode.
-      const field = document.createElement("textarea");
-      field.value = url;
-      field.setAttribute("readonly", "");
-      field.style.position = "fixed";
-      field.style.opacity = "0";
-      document.body.appendChild(field);
-      field.select();
-      try { done = document.execCommand("copy"); } catch { done = false; }
-      field.remove();
-    }
+    const done = await copyText(window.location.href);
     setCopied(done ? "done" : "failed");
     setTimeout(() => setCopied(null), 3000);
   };
@@ -240,9 +225,9 @@ export function SiteDetail({ site, onBack, onRoute }: { site: Site; onBack: () =
         </Section>
       )}
 
-      {site.sourceIds.length > 0 && (
+      {site.reservoirId && site.forecast.length > 0 && (
         <Section title="Conseil pour agir">
-          <AdvicePanel sourceId={site.sourceIds[0]} />
+          <AdvicePanel reservoirId={site.reservoirId} />
         </Section>
       )}
 
