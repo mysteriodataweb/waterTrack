@@ -1,0 +1,118 @@
+# Réentraînement annuel du modèle v3, avec contrôle avant mise en service (backend/ml/retrain.py).
+#
+# Tourne le 1er décembre (les mois de la saison des pluies sont alors collectés) et à la demande.
+# Le candidat (bundle.joblib, model_card.json, report.md) est déposé comme artefact du run et
+# une issue résume la décision. La mise en service reste manuelle : publier le paquet dans une
+# release et mettre à jour MODEL_BUNDLE_URL et MODEL_BUNDLE_SHA256 (backend/README.md, « Annual retraining »).
+#
+# Configuration : secret DATABASE_URL ; variables MODEL_BUNDLE_URL et MODEL_BUNDLE_SHA256 (le champion).
+name: Annual retraining
+
+on:
+  schedule:
+    - cron: "41 6 1 12 *"   # 1er décembre, 06:41 UTC
+  workflow_dispatch:
+    inputs:
+      window_months:
+        description: "Mois cibles de la fenêtre d'évaluation"
+        required: false
+        default: "12"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: retrain
+  cancel-in-progress: false
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        id: config
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODEL_BUNDLE_URL: ${{ vars.MODEL_BUNDLE_URL }}
+          MODEL_BUNDLE_SHA256: ${{ vars.MODEL_BUNDLE_SHA256 }}
+        run: |
+          missing=""
+          for name in DATABASE_URL MODEL_BUNDLE_URL MODEL_BUNDLE_SHA256; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::notice::Réentraînement non configuré, il manque :$missing (voir backend/README.md)"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.config.outputs.ready == 'true'
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        if: steps.config.outputs.ready == 'true'
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Retrain and check
+        id: retrain
+        if: steps.config.outputs.ready == 'true'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODEL_BUNDLE_URL: ${{ vars.MODEL_BUNDLE_URL }}
+          MODEL_BUNDLE_SHA256: ${{ vars.MODEL_BUNDLE_SHA256 }}
+          WINDOW_MONTHS: ${{ inputs.window_months || '12' }}
+        run: |
+          # 0 : candidat prêt ; 2 : champion conservé (pas une erreur) ; 1 : échec
+          set +e
+          python -m scripts.retrain --window-months "$WINDOW_MONTHS" --out retrain_run
+          code=$?
+          set -e
+          if [ "$code" -eq 1 ]; then exit 1; fi
+          exit 0
+
+      - name: Upload the candidate
+        if: steps.config.outputs.ready == 'true' && steps.retrain.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrained-model
+          path: backend/retrain_run/
+          retention-days: 30
+
+      - name: Report the decision
+        if: steps.config.outputs.ready == 'true' && steps.retrain.outcome == 'success'
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DECISION: ${{ steps.retrain.outputs.decision }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$DECISION" = "promote" ]; then
+            title="Retraining $(date +%Y): candidate model ready for review"
+            next="Pour le mettre en service : télécharger l'artefact « retrained-model » du run, publier bundle.joblib dans une release, puis mettre à jour MODEL_BUNDLE_URL et MODEL_BUNDLE_SHA256 (backend/README.md)."
+          else
+            title="Retraining $(date +%Y): current model kept"
+            next="Le modèle en service est conservé ; voir les contrôles ci-dessus."
+          fi
+          { cat retrain_run/report.md; echo; echo "$next"; echo; echo "Run : $RUN_URL"; } > issue.md
+          gh issue create --title "$title" --body-file issue.md
+
+      - name: Report a failure
+        if: failure() && steps.config.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --title "Retraining failed" --body "Le réentraînement annuel a échoué : $RUN_URL"

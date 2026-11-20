@@ -59,6 +59,7 @@ uvicorn app.main:app --reload                # interactive docs: http://localhos
 | 1. Research: extraction 2019 -> today, analysis, training, model saved           | `notebooks/WaterTracker_pipeline.ipynb`                                  | once, then every year after the rainy season |
 | 2. Database load: reservoirs, monthly surfaces, forecasts, water-point statuses  | `python -m scripts.load_v3`                                              | after each notebook run                      |
 | 3. Monthly update: every month missing since the last one in the database, forecasts, statuses | GitHub Actions workflow `monthly-update.yml`, `python -m scripts.monthly_update` or `POST /api/admin/monthly-update` | every week (idempotent) |
+| 4. Annual retraining with a promotion check | GitHub Actions workflow `retrain.yml` or `python -m scripts.retrain` | every year (1 December) |
 
 The monthly update is **idempotent** and **catches up**: it looks for the latest month
 published by both ERA5-Land and CHIRPS, then collects every month missing since the last
@@ -224,6 +225,44 @@ The same update can run elsewhere with the same environment variables:
 `python -m scripts.monthly_update` (exit code 0: success, 1: failure, 2: data still stale), or
 on the server with `SCHEDULER_ENABLED=true` if the service stays awake.
 
+## Annual retraining (with a promotion check)
+
+Once a year, after the rainy season (1 December, workflow `.github/workflows/retrain.yml`,
+or `python -m scripts.retrain`), the v3 model is retrained on the monthly panel of the
+database, which grows every month. The model in service (the "champion") sets the
+configuration: every estimator is cloned with the same hyperparameters and the same
+formulation; only the data change. The reference areas, the radar calibration and the
+static features stay those of the champion, so the filling ratio keeps its definition.
+
+**Honest evaluation.** The new model (the "challenger") is trained only on the months before
+the last season (the 12 latest target months), with its interval correction calibrated on
+the year before, then forecasts that season and is scored like the forecasts actually
+issued (`ml/verification.py`).
+
+**Promotion check.** The candidate is proposed only if every check passes:
+
+| Check | Threshold |
+|---|---|
+| 1 month ahead: gain over the seasonal normal | strictly positive |
+| 2 and 3 months ahead: gain over the seasonal normal | at least −5 % (the champion only matches the normal there) |
+| Share of observations inside the 80 % interval, each horizon | 70 % to 90 % |
+| Error compared with the champion's real record on the same forecasts (when at least 200 issued forecasts have been verified for that horizon) | at most 2 % worse |
+
+The candidate itself is then trained on all the data, season included, and written with
+`model_card.json` and `report.md` (decision, scores, checks, SHA-256 fingerprint). The
+workflow uploads them as the run artefact `retrained-model` and opens an issue with the
+decision. Exit code of the script: 0 candidate ready, 2 champion kept, 1 failure.
+
+**Putting a candidate in service** stays a human decision: download the artefact, publish
+`bundle.joblib` in a new release, then update the variables `MODEL_BUNDLE_URL` and
+`MODEL_BUNDLE_SHA256`. The next monthly update uses it; its forecasts carry the new
+`model_version`, so the verification keeps the records of the two models apart.
+
+Offline, without the database (and therefore without the champion's real record):
+`python -m scripts.retrain --panel data/gee/panel_monthly.parquet`. A trial on the
+monthly panel (96 reservoirs, evaluation season September 2025 to August 2026) with the
+notebook's configuration takes about 3 minutes on 4 CPU cores.
+
 ## Tests
 
 ```bash
@@ -231,7 +270,8 @@ pytest -q
 ```
 
 Unit tests (S2/S1 fusion, features without temporal leakage, v2 fixes, bulletin, monthly
-update: catch-up, quality warnings, bundle fingerprint, exit codes) and API
+update: catch-up, quality warnings, bundle fingerprint, exit codes; forecast verification;
+retraining: evaluation window, no leakage, promotion check, candidate served by the inference) and API
 integration tests on the local database (skipped automatically when v3 data is missing).
 
 ## Security
