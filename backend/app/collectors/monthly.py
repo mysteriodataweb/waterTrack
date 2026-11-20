@@ -12,7 +12,8 @@ Mise à jour mensuelle v3 : collecte satellite, prévisions, statuts.
      `ml/runs/forecast_latest/bundle.joblib`, report de la prévision à 1 mois sur les
      sources de l'application (carte) et, d'octobre à mars, mois prévu de passage sous
      le niveau critique (`ml/drying.py`) ;
-  5. fraîcheur : retard du dernier mois en base sur le dernier mois complet.
+  5. vérification des prévisions émises plus tôt pour les mois collectés (`ml/verification.py`) ;
+  6. fraîcheur : retard du dernier mois en base sur le dernier mois complet.
 
 Déclenchée par un planificateur externe (`scripts/monthly_update.py`, workflow
 GitHub Actions), par le scheduler interne (si activé) ou par `POST /api/admin/monthly-update`.
@@ -146,8 +147,10 @@ def run_monthly_update(month: Optional[str] = None, force: bool = False,
             summary = forecast_and_publish(db, bundle, issue)
             db.commit()
 
+        # Bilan des prévisions qui visaient les mois que l'on vient de mesurer
+        verification = svc.verification_by_horizon(db, [c["month"] for c in collected]) if collected else []
         summary.update(collected=sum(c["reservoirs"] for c in collected), months=collected,
-                       deferred_months=deferred, warnings=warnings, **freshness(latest))
+                       deferred_months=deferred, warnings=warnings, verification=verification, **freshness(latest))
         for w in warnings:
             logger.warning("Qualité : %s", w)
         logger.info("Mise à jour mensuelle : %s", summary)

@@ -86,6 +86,61 @@ def modelable_hybas(db: Session) -> dict[str, int]:
     return dict(db.execute(select(Reservoir.id, Reservoir.hybas_id).where(Reservoir.modelable)).all())
 
 
+# --------------------------------------------------------------------------- #
+# Vérification des prévisions émises (ml/verification.py)
+# --------------------------------------------------------------------------- #
+VERIFICATION_REFERENCE = "normale saisonnière : médiane du même mois calendaire les années précédentes"
+
+
+def verification_frame(db: Session, target_months: Optional[list[date]] = None,
+                       since: Optional[date] = None) -> pd.DataFrame:
+    """Prévisions émises dont le mois cible est mesuré, avec l'observation et la normale saisonnière."""
+    from ml import verification
+
+    query = select(FillForecast)
+    if target_months is not None:
+        query = query.where(FillForecast.target_month.in_(target_months))
+    elif since is not None:
+        query = query.where(FillForecast.target_month >= since)
+    rows = db.execute(query).scalars().all()
+    if not rows:
+        return pd.DataFrame()
+    fc = pd.DataFrame([{c.name: getattr(r, c.name) for c in FillForecast.__table__.columns} for r in rows])
+    obs = pd.DataFrame(
+        db.execute(select(WaterAreaObservation.reservoir_id, WaterAreaObservation.month, WaterAreaObservation.fill)).all(),
+        columns=["reservoir_id", "month", "fill"],
+    )
+    return verification.match(fc, obs, settings.critical_fill)
+
+
+def verification_by_horizon(db: Session, target_months: list[str]) -> list[dict]:
+    """Scores, par horizon, des prévisions qui visaient les mois que l'on vient de mesurer."""
+    from ml import verification
+
+    v = verification_frame(db, target_months=[_month_start(m) for m in target_months])
+    return verification.summarise(v, "horizon") if len(v) else []
+
+
+def verification_report(db: Session, months: int = 12) -> dict:
+    """Bilan des prévisions dont le mois cible tombe dans les `months` derniers mois mesurés."""
+    from ml import verification
+
+    latest = latest_observed_month(db)
+    if latest is None:
+        raise LookupError("Aucune observation v3 en base")
+    start = (pd.Period(latest, "M") - (months - 1)).to_timestamp().date()
+    v = verification_frame(db, since=start)
+    return {
+        "window": {"from": start.strftime("%Y-%m"), "to": latest.strftime("%Y-%m")},
+        "critical_fill": settings.critical_fill,
+        "reference": VERIFICATION_REFERENCE,
+        "models": sorted(v["model_version"].dropna().unique().tolist()) if len(v) else [],
+        "overall": verification.scores(v) if len(v) else None,
+        "by_horizon": verification.summarise(v, "horizon") if len(v) else [],
+        "by_target_month": verification.summarise(v, "target_month") if len(v) else [],
+    }
+
+
 def forecasts_frame(db: Session, issue_month: Optional[date] = None) -> pd.DataFrame:
     issue_month = issue_month or latest_issue_month(db)
     if issue_month is None:

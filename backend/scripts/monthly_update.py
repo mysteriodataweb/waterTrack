@@ -51,6 +51,16 @@ def markdown_summary(summary: dict) -> str:
               f"statuts à 1 mois : {summary['status_counts']}",
               f"- Mois d'assèchement : {summary.get('drying_forecasts', 0)} retenues"
               + (f" ({summary['drying_note']})" if summary.get("drying_note") else "")]
+    if summary.get("verification"):
+        lines += ["", "### Vérification des prévisions qui visaient ces mois", "",
+                  "| Horizon | Prévisions | Erreur | Normale | Gain sur la normale | Dans l'intervalle 80 % | Alertes justes / fausses |",
+                  "|---|---|---|---|---|---|---|"]
+        for r in summary["verification"]:
+            gain = "—" if r["skill_vs_normal"] is None else f"{r['skill_vs_normal']:+.0%}"
+            normal = "—" if r["normal_mae"] is None else f"{r['normal_mae']:.3f}"
+            lines.append(f"| {r['horizon']} mois | {r['n']} | {r['mae']:.3f} | {normal} | {gain} | "
+                         f"{r['coverage_80']:.0%} | {r['hits']} / {r['false_alarms']} |")
+        lines.append("")
     if summary["deferred_months"]:
         lines.append(f"- {summary['deferred_months']} mois reportés au passage suivant")
     lines += [f"- ⚠️ {w}" for w in summary["warnings"]]

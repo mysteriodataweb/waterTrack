@@ -66,7 +66,11 @@ one in the database, oldest first (at most 6 per run; the rest waits for the nex
 Each month is saved as soon as it is collected, so a failure on one month does not lose the
 previous ones, and forecasts are issued for each collected month. A month where more than
 25 % of the reservoirs have no measurement (persistent clouds, unusable radar) is reported
-as a warning. The extraction parameters in `app/collectors/water_area.py` are those of the
+as a warning. The forecasts issued earlier for the months just collected are then checked
+against what was measured (`ml/verification.py`): error compared with the reservoir's
+seasonal normal (median of the same calendar month in previous years), share of observations
+inside the 80 % interval, alerts confirmed or not. The run summary shows it per horizon, and
+`GET /api/verification` gives the record over the last 12 measured months. The extraction parameters in `app/collectors/water_area.py` are those of the
 notebook (10 m, Cloud Score+ 0.60, 90 % reliability threshold); changing them would make new
 measurements incomparable with the training data. Parity has been checked: the API
 collector and the notebook give identical values for all 96 reservoirs.
@@ -82,6 +86,7 @@ collector and the notebook give identical values for all 96 reservoirs.
 | GET    | `/api/water-sources/{id}/forecast`                     | **v3** Same forecast, through the application's water point            | no      |
 | GET    | `/api/reservoirs/{id}/drying`                          | **v3** Dry season: month of the critical level, 80 % range, P(lasts to June) | no |
 | GET    | `/api/bulletin?month=&format=json\|csv`                | **v3** Monthly bulletin, reservoirs ranked by risk; CSV export         | no      |
+| GET    | `/api/verification?months=12`                          | **v3** Record of the forecasts already issued, once their target month is measured: error vs the seasonal normal, 80 % interval coverage, alerts | no |
 | PATCH  | `/api/admin/reservoirs/{id}/validation`                | **v3** Inventory validation (`valide`, `rejete`, `a_valider`)          | API key |
 | POST   | `/api/admin/monthly-update`                            | **v3** Collect `month`, or catch up the missing months (`max_months`, default 3) + forecasts + statuses | API key |
 | POST   | `/api/admin/recompute`                                 | Water-point statuses (v3 if forecasts exist, otherwise v2)             | API key |

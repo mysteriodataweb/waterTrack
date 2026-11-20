@@ -181,6 +181,18 @@ def monthly_bulletin(
     return bulletin
 
 
+@router.get("/verification")
+def forecast_verification(
+    db: Session = Depends(get_db),
+    months: int = Query(default=12, ge=1, le=60, description="Mois cibles mesurés pris en compte"),
+):
+    """Bilan des prévisions déjà émises : erreur, gain sur la normale saisonnière, intervalle à 80 %, alertes."""
+    try:
+        return svc.verification_report(db, months)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 # --------------------------------------------------------------------------- #
 # Administration
 # --------------------------------------------------------------------------- #

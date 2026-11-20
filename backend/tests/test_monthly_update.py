@@ -102,6 +102,8 @@ def fake_world(monkeypatch):
     monkeypatch.setattr(M.svc, "region_geojson", lambda db: {"A": {}, "B": {}})
     monkeypatch.setattr(M.svc, "modelable_hybas", lambda db: {"A": 1, "B": 1})
     monkeypatch.setattr(M.svc, "upsert_observations", upsert)
+    monkeypatch.setattr(M.svc, "verification_by_horizon",
+                        lambda db, months: state.setdefault("verified", []).append(months) or [{"horizon": 1, "n": 2}])
     return state
 
 
@@ -113,6 +115,8 @@ def test_catch_up_collects_every_missing_month_and_issues_each(fake_world):
     assert [m["month"] for m in summary["months"]] == ["2026-09", "2026-10"]
     assert summary["months"][0]["sources"] == {"S2": 1, "S1": 1}
     assert summary["issue_month"] == "2026-10" and summary["deferred_months"] == 0
+    # Les prévisions qui visaient les mois collectés sont vérifiées une fois ces mois mesurés
+    assert fake_world["verified"] == [["2026-09", "2026-10"]] and summary["verification"] == [{"horizon": 1, "n": 2}]
 
 
 def test_a_failed_month_keeps_the_previous_ones(fake_world):
@@ -130,6 +134,7 @@ def test_up_to_date_database_reissues_the_latest_month(fake_world):
     summary = M.run_monthly_update()
     assert not any(e.startswith("collect") for e in fake_world["log"])
     assert fake_world["issued"] == ["2026-10"] and summary["months"] == []
+    assert summary["verification"] == [] and "verified" not in fake_world
 
 
 def test_explicit_month_is_skipped_unless_forced(fake_world):
@@ -192,7 +197,9 @@ def test_fetch_bundle_keeps_an_existing_file_and_needs_an_address(tmp_path, serv
 SUMMARY = {"issue_month": "2026-10", "forecasts": 288, "sources_updated": 65, "status_counts": {"actif": 90},
            "drying_forecasts": 0, "drying_note": "hors saison sèche", "collected": 96,
            "months": [{"month": "2026-10", "reservoirs": 96, "sources": {"S2": 95, "S1": 1}}],
-           "deferred_months": 0, "warnings": [], "latest_month": "2026-10", "months_behind": 0, "data": "ok"}
+           "deferred_months": 0, "warnings": [], "latest_month": "2026-10", "months_behind": 0, "data": "ok",
+           "verification": [{"horizon": 1, "n": 90, "mae": 0.08, "normal_mae": 0.1, "skill_vs_normal": 0.2,
+                             "coverage_80": 0.85, "hits": 4, "false_alarms": 1}]}
 
 
 def test_cli_success_writes_the_step_summary(monkeypatch, tmp_path):
@@ -202,6 +209,7 @@ def test_cli_success_writes_the_step_summary(monkeypatch, tmp_path):
     assert cli.main([]) == cli.OK
     text = out.read_text(encoding="utf-8")
     assert "| 2026-10 | 96 | S1 1, S2 95 |" in text and "Dernier mois en base : **2026-10**" in text
+    assert "| 1 mois | 90 | 0.080 | 0.100 | +20% | 85% | 4 / 1 |" in text
 
 
 def test_cli_exit_codes(monkeypatch):

@@ -46,6 +46,7 @@ Small reservoirs carry the dry season around Ouagadougou: livestock watering, ma
 **7. Automatic monthly update** — *ready, to be switched on with the GitHub settings*
 - A GitHub Actions workflow runs every week, outside the API (the free hosting plan sleeps). It finds the latest month published by ERA5-Land and CHIRPS, collects every month missing since the last one in the database, oldest first, measures every reservoir in Google Earth Engine, issues the forecasts of each month and updates the statuses.
 - Each month is saved as soon as it is collected, and poorly measured months (persistent clouds) are reported.
+- Once a month is measured, the forecasts issued for it one, two and three months earlier are checked against reality and against the reservoir's seasonal normal: this is the model's real track record (`GET /api/verification`).
 - Alerts: a failed run, or data more than two months behind, opens a GitHub issue that closes itself at the next successful run; `/api/health` reports the latest month and the delay.
 - To switch it on: publish the model bundle in a GitHub release and add the database URL and an Earth Engine service-account key to the repository's Actions settings (`backend/README.md`, "Automatic monthly update"). Models are still retrained manually, once a year after the rainy season.
 
@@ -149,6 +150,7 @@ figures, build scripts and defense preparation. The technical report of the back
 | `GET` | `/api/bulletin` | v3 monthly bulletin: all reservoirs ranked by risk, with the drying month in the dry season (JSON or CSV) |
 | `GET` | `/api/reservoirs`, `/api/reservoirs/{id}/history` | v3 reservoirs and their monthly water-surface series (10 m) |
 | `GET` | `/api/report/summary` | Aggregated historical report (NDWI trend, zones, top risk) |
+| `GET` | `/api/verification` | Record of past forecasts once their month is measured: error vs the seasonal normal, interval coverage, alerts |
 | `GET` | `/api/health` | Service health and data freshness (latest month, months behind) |
 | `POST` | `/api/admin/monthly-update` | Collect a month, or catch up the missing months, then forecast and update statuses (API key) |
 | `POST` | `/api/admin/recompute` | Recompute risk scores (API key) |
@@ -187,7 +189,7 @@ The data must stay current for the bulletin, the alerts and the drying month to 
 **How it works**
 1. Every Monday (and on demand from the Actions tab), the workflow looks for the latest month published by both ERA5-Land (evaporation, temperature) and CHIRPS (rainfall); CHIRPS comes out about three weeks after the end of the month.
 2. It collects every month missing since the last one in the database, oldest first, at most 6 per run: water area at 10 m (Sentinel-2, radar for cloudy months) and climate of each modelled reservoir.
-3. Each month is saved as soon as it is collected, then the forecasts, statuses and, from October to March, the drying month are issued for it.
+3. Each month is saved as soon as it is collected, then the forecasts, statuses and, from October to March, the drying month are issued for it. The forecasts made earlier for that month are checked against what was measured; the run page shows the result per horizon.
 4. A month where more than 25 % of the reservoirs could not be measured is flagged as a warning on the run page.
 
 **Alerts**
@@ -233,7 +235,8 @@ pytest -q          # API, predictions, fixes, feature leakage checks, v3 forecas
 - [x] Serve the drying month in the API and the monthly bulletin
 - [x] Show the drying month in the frontend (reservoir sheet and bulletin table)
 - [x] Reliable monthly collection: weekly GitHub Actions trigger, catch-up of missed months, failure alerts (to switch on: `backend/README.md`)
-- [ ] Annual retraining with a promotion check, and monthly verification of past forecasts
+- [x] Monthly verification of past forecasts against the seasonal normal (`GET /api/verification`)
+- [ ] Annual retraining with a promotion check
 - [ ] Replace the legacy LLM advice with messages built on the v3 forecasts
 - [x] Abnormal-withdrawal analysis (`backend/ml/withdrawals.py`): a short list of reservoirs to check
 - [ ] Field checks of the flagged reservoirs, then serve the list in the API
