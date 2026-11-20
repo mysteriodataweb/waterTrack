@@ -7,6 +7,10 @@ implémentation, donc une seule façon de calculer une prévision.
 """
 from __future__ import annotations
 
+import hashlib
+import os
+import re
+import urllib.request
 from pathlib import Path
 
 import joblib
@@ -22,10 +26,43 @@ LATEST_BUNDLE = RUNS_DIR / "forecast_latest" / "bundle.joblib"
 DRY_FILL = 0.05          # remplissage prévu sous lequel la retenue est considérée « tarie »
 ALERT_PROBABILITY = 0.5  # probabilité calibrée de niveau critique déclenchant « à risque »
 
+# Paquet absent (serveur, GitHub Actions) : téléchargé depuis cette adresse, avec cette empreinte
+BUNDLE_URL_ENV, BUNDLE_SHA256_ENV = "MODEL_BUNDLE_URL", "MODEL_BUNDLE_SHA256"
+
+
+def fetch_bundle(path: Path = LATEST_BUNDLE, url: str | None = None, sha256: str | None = None) -> Path:
+    """Télécharge le paquet de modèles s'il est absent et qu'une adresse est configurée.
+
+    Le paquet est un fichier joblib : le charger exécute du code. Il n'est donc accepté
+    que si son empreinte SHA-256 est exactement celle attendue (`MODEL_BUNDLE_SHA256`).
+    """
+    url = os.environ.get(BUNDLE_URL_ENV, "") if url is None else url
+    sha256 = (os.environ.get(BUNDLE_SHA256_ENV, "") if sha256 is None else sha256).strip().lower()
+    if path.exists() or not url:
+        return path
+    if not url.startswith("https://"):
+        raise RuntimeError(f"{BUNDLE_URL_ENV} doit être une adresse https://")
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise RuntimeError(f"{BUNDLE_SHA256_ENV} manquant ou invalide : il est obligatoire avec {BUNDLE_URL_ENV}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".part")
+    digest = hashlib.sha256()
+    with urllib.request.urlopen(url, timeout=300) as response, open(partial, "wb") as out:
+        for chunk in iter(lambda: response.read(1 << 20), b""):
+            digest.update(chunk)
+            out.write(chunk)
+    if digest.hexdigest() != sha256:
+        partial.unlink(missing_ok=True)
+        raise RuntimeError(f"Empreinte du paquet téléchargé différente de {BUNDLE_SHA256_ENV} : paquet refusé")
+    partial.replace(path)
+    return path
+
 
 def load_bundle(path: Path = LATEST_BUNDLE) -> dict:
+    fetch_bundle(path)
     if not path.exists():
-        raise FileNotFoundError(f"Paquet de modèles introuvable : {path} (exécuter le notebook)")
+        raise FileNotFoundError(f"Paquet de modèles introuvable : {path} (exécuter le notebook, "
+                                f"ou configurer {BUNDLE_URL_ENV} et {BUNDLE_SHA256_ENV})")
     return joblib.load(path)
 
 

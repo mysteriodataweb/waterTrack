@@ -165,6 +165,8 @@ class ValidationUpdate(BaseModel):
 class MonthlyUpdateRequest(BaseModel):
     month: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}$")
     force: bool = False
+    # Rattrapage sans mois indiqué : borné, la requête attend la fin de la collecte
+    max_months: int = Field(default=3, ge=1, le=12)
 
 
 class NavigationStep(BaseModel):
@@ -232,3 +234,7 @@ class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     database: Literal["ok", "error"]
     external: dict[str, Literal["ok", "error"]]
+    # Fraîcheur des surfaces mensuelles : « stale » si la collecte a pris du retard
+    data: Literal["ok", "stale", "empty", "unknown"] = "unknown"
+    latest_month: Optional[str] = None
+    months_behind: Optional[int] = None

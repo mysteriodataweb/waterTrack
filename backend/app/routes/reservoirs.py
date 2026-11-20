@@ -204,10 +204,10 @@ def validate_reservoir(
 
 @router.post("/admin/monthly-update")
 def trigger_monthly_update(payload: MonthlyUpdateRequest, _: str = Depends(require_api_key)):
-    """Collecte satellite v3 d'un mois (défaut : dernier disponible) puis prévisions et statuts."""
+    """Collecte satellite v3 d'un mois, ou rattrapage des mois manquants (au plus `max_months`), puis prévisions et statuts."""
     from ..collectors.monthly import run_monthly_update
 
     try:
-        return run_monthly_update(month=payload.month, force=payload.force)
+        return run_monthly_update(month=payload.month, force=payload.force, max_months=payload.max_months)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

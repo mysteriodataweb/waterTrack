@@ -70,6 +70,22 @@ def latest_issue_month(db: Session) -> Optional[date]:
     return db.execute(select(func.max(FillForecast.issue_month))).scalar()
 
 
+def latest_observed_month(db: Session) -> Optional[date]:
+    """Dernier mois présent dans les surfaces mensuelles (None si la base est vide)."""
+    return db.execute(select(func.max(WaterAreaObservation.month))).scalar()
+
+
+def month_observed(db: Session, month: str) -> bool:
+    return db.execute(
+        select(WaterAreaObservation.id).where(WaterAreaObservation.month == _month_start(month)).limit(1)
+    ).first() is not None
+
+
+def modelable_hybas(db: Session) -> dict[str, int]:
+    """Sous-bassin HydroBASINS de chaque réservoir modélisable (forçages climatiques)."""
+    return dict(db.execute(select(Reservoir.id, Reservoir.hybas_id).where(Reservoir.modelable)).all())
+
+
 def forecasts_frame(db: Session, issue_month: Optional[date] = None) -> pd.DataFrame:
     issue_month = issue_month or latest_issue_month(db)
     if issue_month is None:

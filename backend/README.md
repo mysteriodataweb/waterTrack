@@ -58,12 +58,16 @@ uvicorn app.main:app --reload                # interactive docs: http://localhos
 | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------- |
 | 1. Research: extraction 2019 -> today, analysis, training, model saved           | `notebooks/WaterTracker_pipeline.ipynb`                                  | once, then every year after the rainy season |
 | 2. Database load: reservoirs, monthly surfaces, forecasts, water-point statuses  | `python -m scripts.load_v3`                                              | after each notebook run                      |
-| 3. Monthly update: collection of the latest published month, forecasts, statuses | automatic (`SCHEDULER_ENABLED=true`) or `POST /api/admin/monthly-update` | every month                                  |
+| 3. Monthly update: every month missing since the last one in the database, forecasts, statuses | GitHub Actions workflow `monthly-update.yml`, `python -m scripts.monthly_update` or `POST /api/admin/monthly-update` | every week (idempotent) |
 
-The monthly update is **idempotent**: the scheduler checks it every `COLLECT_HOURS` hours
-and collects a month only once, as soon as ERA5-Land and CHIRPS have published it. The
-extraction parameters in `app/collectors/water_area.py` are those of the notebook (10 m,
-Cloud Score+ 0.60, 90 % reliability threshold); changing them would make new
+The monthly update is **idempotent** and **catches up**: it looks for the latest month
+published by both ERA5-Land and CHIRPS, then collects every month missing since the last
+one in the database, oldest first (at most 6 per run; the rest waits for the next run).
+Each month is saved as soon as it is collected, so a failure on one month does not lose the
+previous ones, and forecasts are issued for each collected month. A month where more than
+25 % of the reservoirs have no measurement (persistent clouds, unusable radar) is reported
+as a warning. The extraction parameters in `app/collectors/water_area.py` are those of the
+notebook (10 m, Cloud Score+ 0.60, 90 % reliability threshold); changing them would make new
 measurements incomparable with the training data. Parity has been checked: the API
 collector and the notebook give identical values for all 96 reservoirs.
 
@@ -71,7 +75,7 @@ collector and the notebook give identical values for all 96 reservoirs.
 
 | Method | Path                                                   | Description                                                            | Auth    |
 | ------ | ------------------------------------------------------ | ---------------------------------------------------------------------- | ------- |
-| GET    | `/api/health`                                          | Database + external services status                                    | no      |
+| GET    | `/api/health`                                          | Database + external services status, data freshness (latest month, months behind; `stale` beyond 2) | no |
 | GET    | `/api/reservoirs?origin=&validation=`                  | **v3** Water bodies: origin, validation, latest filling, status        | no      |
 | GET    | `/api/reservoirs/{id}/history?start=&end=`             | **v3** Monthly series: surface, filling, data source, volume, rainfall | no      |
 | GET    | `/api/reservoirs/{id}/forecast`                        | **v3** 1-3 month forecast: filling, 80 % interval, P(critical level)   | no      |
@@ -79,7 +83,7 @@ collector and the notebook give identical values for all 96 reservoirs.
 | GET    | `/api/reservoirs/{id}/drying`                          | **v3** Dry season: month of the critical level, 80 % range, P(lasts to June) | no |
 | GET    | `/api/bulletin?month=&format=json\|csv`                | **v3** Monthly bulletin, reservoirs ranked by risk; CSV export         | no      |
 | PATCH  | `/api/admin/reservoirs/{id}/validation`                | **v3** Inventory validation (`valide`, `rejete`, `a_valider`)          | API key |
-| POST   | `/api/admin/monthly-update`                            | **v3** Collect one month + forecasts + statuses                        | API key |
+| POST   | `/api/admin/monthly-update`                            | **v3** Collect `month`, or catch up the missing months (`max_months`, default 3) + forecasts + statuses | API key |
 | POST   | `/api/admin/recompute`                                 | Water-point statuses (v3 if forecasts exist, otherwise v2)             | API key |
 | GET    | `/api/water-sources?page=&zone=&status=`               | Paginated water points                                                 | no      |
 | GET    | `/api/water-sources/{id}`                              | Water-point details                                                    | no      |
@@ -172,9 +176,48 @@ the old one is still reachable (`SOURCE_DATABASE_URL`).
    production database (v3 tables are created automatically, v2 tables are untouched).
 2. Read-only use (bulletin, forecasts): nothing else to do, everything is served from
    the database.
-3. Monthly update on the server: provide `ml/runs/forecast_latest/bundle.joblib` to the
-   service (model artefacts are excluded from git) and an Earth Engine service account
-   (`GEE_SERVICE_ACCOUNT_KEY`), then set `SCHEDULER_ENABLED=true`.
+3. Monthly update: see the next section.
+
+## Automatic monthly update (GitHub Actions)
+
+The update runs outside the API, in the workflow `.github/workflows/monthly-update.yml`:
+every Monday, and on demand from the Actions tab (a month can be given, and forced).
+It does not depend on Render, whose free plan puts the service to sleep, which would stop
+an in-process scheduler.
+
+**Setup, once:**
+
+1. **Publish the model bundle.** It is excluded from git (`ml/runs/`). Attach it to a GitHub
+   release and note its SHA-256 fingerprint:
+   ```bash
+   gh release create model-v3 ml/runs/forecast_latest/bundle.joblib --title "Forecasting model v3"
+   sha256sum ml/runs/forecast_latest/bundle.joblib      # Windows: certutil -hashfile <file> SHA256
+   ```
+   The download URL is `https://github.com/<owner>/<repo>/releases/download/model-v3/bundle.joblib`.
+   The bundle is a joblib (pickle) file, so the update refuses it unless its fingerprint is
+   exactly `MODEL_BUNDLE_SHA256`. Publishing a new bundle means updating the fingerprint.
+   On a public repository the release is public too: the bundle holds the trained models and
+   per-reservoir statistics, no credentials.
+2. **Earth Engine service account.** Create a service account in the Google Cloud project,
+   register it for Earth Engine, and download its JSON key.
+3. **GitHub settings** (Settings > Secrets and variables > Actions):
+   - secrets: `DATABASE_URL` (the Neon connection string), `GEE_SERVICE_ACCOUNT_KEY` (the JSON key content);
+   - variables: `MODEL_BUNDLE_URL`, `MODEL_BUNDLE_SHA256`, and `GEE_PROJECT` if it is not `water-492400`.
+4. **First run:** Actions > Monthly update > Run workflow. Until the four values above are
+   set, the workflow only prints a notice and does nothing.
+
+**Alerts.** If a run fails, or if the data are still more than 2 months behind after it,
+the workflow opens an issue "Monthly update failed" (or comments on the open one) with a
+link to the run, and closes it at the next successful run. Each run page shows a summary:
+months collected, data sources, warnings, forecasts issued. `GET /api/health` also reports
+`data: stale` and `status: degraded` when the latest month is more than 2 months old, which
+catches the case where the workflow stopped running altogether.
+
+**Limits.** GitHub disables scheduled workflows in public repositories after 60 days without
+any repository activity (it sends an e-mail first); re-enable it in the Actions tab.
+The same update can run elsewhere with the same environment variables:
+`python -m scripts.monthly_update` (exit code 0: success, 1: failure, 2: data still stale), or
+on the server with `SCHEDULER_ENABLED=true` if the service stays awake.
 
 ## Tests
 
@@ -182,7 +225,8 @@ the old one is still reachable (`SOURCE_DATABASE_URL`).
 pytest -q
 ```
 
-Unit tests (S2/S1 fusion, features without temporal leakage, v2 fixes, bulletin) and API
+Unit tests (S2/S1 fusion, features without temporal leakage, v2 fixes, bulletin, monthly
+update: catch-up, quality warnings, bundle fingerprint, exit codes) and API
 integration tests on the local database (skipped automatically when v3 data is missing).
 
 ## Security

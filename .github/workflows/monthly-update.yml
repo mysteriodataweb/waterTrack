@@ -1,0 +1,119 @@
+# Mise à jour mensuelle v3 : collecte satellite des mois manquants, prévisions, statuts.
+#
+# Tourne chaque semaine : un mois n'est collecté qu'une fois, dès qu'ERA5-Land et CHIRPS
+# l'ont publié ; les mois manqués sont rattrapés au passage suivant.
+# En cas d'échec ou de données en retard, une issue « Monthly update failed » est ouverte
+# (ou complétée), puis refermée au premier passage réussi.
+#
+# Configuration (Settings > Secrets and variables > Actions), voir backend/README.md :
+#   secrets   DATABASE_URL, GEE_SERVICE_ACCOUNT_KEY
+#   variables MODEL_BUNDLE_URL, MODEL_BUNDLE_SHA256, GEE_PROJECT (facultatif)
+name: Monthly update
+
+on:
+  schedule:
+    - cron: "23 5 * * 1"   # chaque lundi, 05:23 UTC
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "Mois à collecter, AAAA-MM (vide : rattraper tous les mois manquants)"
+        required: false
+        default: ""
+      force:
+        description: "Recollecter le mois même s'il est déjà en base"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: monthly-update
+  cancel-in-progress: false
+
+env:
+  ALERT_TITLE: Monthly update failed
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        id: config
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEE_SERVICE_ACCOUNT_KEY: ${{ secrets.GEE_SERVICE_ACCOUNT_KEY }}
+          MODEL_BUNDLE_URL: ${{ vars.MODEL_BUNDLE_URL }}
+          MODEL_BUNDLE_SHA256: ${{ vars.MODEL_BUNDLE_SHA256 }}
+        run: |
+          missing=""
+          for name in DATABASE_URL GEE_SERVICE_ACCOUNT_KEY MODEL_BUNDLE_URL MODEL_BUNDLE_SHA256; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::notice::Mise à jour mensuelle non configurée, il manque :$missing (voir backend/README.md)"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.config.outputs.ready == 'true'
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        if: steps.config.outputs.ready == 'true'
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Collect, forecast, publish
+        if: steps.config.outputs.ready == 'true'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEE_SERVICE_ACCOUNT_KEY: ${{ secrets.GEE_SERVICE_ACCOUNT_KEY }}
+          MODEL_BUNDLE_URL: ${{ vars.MODEL_BUNDLE_URL }}
+          MODEL_BUNDLE_SHA256: ${{ vars.MODEL_BUNDLE_SHA256 }}
+          GEE_PROJECT_VAR: ${{ vars.GEE_PROJECT }}
+          MONTH: ${{ inputs.month }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          # Une variable vide écraserait la valeur par défaut de la configuration
+          if [ -n "$GEE_PROJECT_VAR" ]; then export GEE_PROJECT="$GEE_PROJECT_VAR"; fi
+          args=()
+          if [ -n "$MONTH" ]; then args+=(--month "$MONTH"); fi
+          if [ "$FORCE" = "true" ]; then args+=(--force); fi
+          python -m scripts.monthly_update "${args[@]}"
+
+      - name: Open or update the alert issue
+        if: failure() && steps.config.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body="La mise à jour mensuelle a échoué ou les données sont en retard : $RUN_URL"
+          number=$(gh issue list --state open --search "\"$ALERT_TITLE\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$ALERT_TITLE" --body "$body"
+          fi
+
+      - name: Close the alert issue
+        if: success() && steps.config.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          for number in $(gh issue list --state open --search "\"$ALERT_TITLE\" in:title" --json number --jq '.[].number'); do
+            gh issue close "$number" --comment "La mise à jour mensuelle fonctionne de nouveau : $RUN_URL"
+          done
