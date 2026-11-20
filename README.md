@@ -65,6 +65,7 @@ Small reservoirs carry the dry season around Ouagadougou: livestock watering, ma
 | Drying month (survival model) | Most likely critical month, range, probability of lasting until June | Done, served by the API and shown in the bulletin and the reservoir sheet from October to March |
 | Water detection pixel by pixel (U-Net) | Better measurement of ponds under 5 ha and of water under vegetation | First model trained (12 epochs on CPU): on ambiguous pixels it beats the MNDWI rule, not yet Dynamic World (see below); not used in the monthly measurement yet |
 | Automatic inventory | Detect every reservoir each year, to scale to a region or a country | Code ready (`ml/unet_inventory.py`); not run yet, needs Earth Engine |
+| Abnormal withdrawals | Compare the observed drawdown with the drawdown expected from comparable reservoirs, flag reservoirs that empty much faster | Analysis done (model, tests, notebook); low sensitivity, needs field checks; not in the API |
 
 ### U-Net water detection: first results
 
@@ -90,7 +91,6 @@ How to read it:
 - **Limits**: radar is not ground truth (wind brightens water; dry sandy soils and smooth surfaces look dark; vegetated water looks brighter), so these figures show a direction, not an accuracy. This is a short CPU run; the full 40-epoch training on GPU (`backend/notebooks/WaterTracker_unet_colab.ipynb`) may close the gap with Dynamic World.
 
 Training guide and how to retrieve the model: `backend/ml/UNET_TRAINING.md`.
-| Abnormal withdrawals | Compare the observed drawdown with the drawdown expected from comparable reservoirs, flag reservoirs that empty much faster | Analysis done (model, tests, notebook); low sensitivity, needs field checks; not in the API |
 
 ---
 
@@ -111,7 +111,8 @@ frontend/    React + TypeScript frontend (Vite, shadcn/ui, Leaflet)
 | Drying-up forecast (v2) | Prophet (`app/services/prophet_service.py`) |
 | AI recommendations | Groq / Qwen (`app/services/llm.py`) |
 | Navigation | OpenRouteService (`app/routes/navigation.py`) |
-| Scheduler | APScheduler (`app/collectors/scheduler.py`) |
+| Monthly update | GitHub Actions workflow (`.github/workflows/monthly-update.yml`) + `scripts/monthly_update.py` (`app/collectors/monthly.py`) |
+| In-process scheduler (optional) | APScheduler (`app/collectors/scheduler.py`) |
 
 ### Research notebooks — `backend/notebooks/`
 - `WaterTracker_pipeline.ipynb`: complete, reproducible pipeline from Google Earth Engine extraction
@@ -179,6 +180,38 @@ npm run dev                     # http://localhost:5173
 
 ---
 
+## Monthly update (data collection)
+
+The data must stay current for the bulletin, the alerts and the drying month to mean anything. Collection is automated by a GitHub Actions workflow, separate from the API.
+
+**How it works**
+1. Every Monday (and on demand from the Actions tab), the workflow looks for the latest month published by both ERA5-Land (evaporation, temperature) and CHIRPS (rainfall); CHIRPS comes out about three weeks after the end of the month.
+2. It collects every month missing since the last one in the database, oldest first, at most 6 per run: water area at 10 m (Sentinel-2, radar for cloudy months) and climate of each modelled reservoir.
+3. Each month is saved as soon as it is collected, then the forecasts, statuses and, from October to March, the drying month are issued for it.
+4. A month where more than 25 % of the reservoirs could not be measured is flagged as a warning on the run page.
+
+**Alerts**
+- A failed run, or data still more than two months behind after the run, opens a GitHub issue "Monthly update failed" with a link to the run; it is closed at the next successful run.
+- `GET /api/health` reports the latest month in the database and how many months behind it is (`data: stale`, `status: degraded` beyond two months), which also reveals a workflow that has stopped running.
+
+**Switching it on** (once, details in `backend/README.md`, "Automatic monthly update")
+1. Publish the model bundle (`backend/ml/runs/forecast_latest/bundle.joblib`) in a GitHub release and note its SHA-256 fingerprint; the update refuses a bundle whose fingerprint differs.
+2. Create an Earth Engine service account and download its JSON key.
+3. In Settings > Secrets and variables > Actions, add the secrets `DATABASE_URL` and `GEE_SERVICE_ACCOUNT_KEY`, and the variables `MODEL_BUNDLE_URL` and `MODEL_BUNDLE_SHA256`.
+4. Run the workflow once by hand (Actions > Monthly update > Run workflow).
+
+Until these are set, the weekly run only prints a notice. The same update runs anywhere with the same environment variables:
+
+```bash
+cd backend
+python -m scripts.monthly_update                      # catch up every missing month
+python -m scripts.monthly_update --month 2026-10 --force
+```
+
+GitHub pauses scheduled workflows of a public repository after 60 days without activity; re-enable it in the Actions tab.
+
+---
+
 ## Requirements
 - Python 3.11+, Node 20+
 - Accounts: **Google Earth Engine**, **Groq** (LLM), **OpenRouteService** (navigation)
@@ -189,7 +222,7 @@ npm run dev                     # http://localhost:5173
 ## Tests
 ```bash
 cd backend
-pytest -q          # API, predictions, fixes, feature leakage checks, v3 forecasts
+pytest -q          # API, predictions, fixes, feature leakage checks, v3 forecasts, drying month, monthly update
 ```
 
 ---
